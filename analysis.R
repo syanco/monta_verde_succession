@@ -88,7 +88,7 @@ tot_counts <-dat_join %>%
   count(date) %>%
   summarise(m_count = mean(n), se = sd(n)/length(n))
 
-ggplot(raw_counts) +
+ggplot(mig_counts) +
   geom_bar(aes(x=year_planted, fill = mig_code), position = "fill")
 
 ggplot(guild_counts) +
