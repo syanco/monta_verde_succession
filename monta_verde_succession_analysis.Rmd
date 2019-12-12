@@ -1,0 +1,271 @@
+---
+title: "Monta Verde Succession"
+author: "Scott Yanco"
+date: "December 11, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+This document describes analyses and preliminary results of avian point count surveys across a successional gradient at the Monta Verde Cloud Forest in Costa Rica.
+
+# Required Libraries and Custom Functions
+
+```{r message=FALSE, warning=FALSE}
+#### REQUIRED LIBRARIES ####
+library(dplyr)
+library(ggplot2)
+library(lme4)
+library(AICcmodavg)
+library(ggeffects)
+library(viridis)
+library(tidyr)
+```
+
+Load a custom function that will help us combine initial migratory coding into bigger bins.
+
+```{r}
+combineMigCats <- Vectorize(vectorize.args = "x",
+                               FUN = function(x) {
+                                 switch(as.character(x), 
+                            "altitudinal" = "mig",
+                            "long-distance" = "mig",
+                            "short-distance" = "mig",
+                            "nomadic" = "nomadic",
+                            "resident" = "res",
+                            "NA" = NA)})
+```
+
+
+# Import and Process Data
+
+## Load data
+First load all the point count data and combine into a single data frame.
+
+```{r}
+#load site data
+nf4_2011 <- read.csv("../data_by_site/NF4-2011.csv")
+nf1_2003 <- read.csv("../data_by_site/NF1-2003.csv")
+nf2 <- read.csv("../data_by_site/NF2.csv")
+mf1 <- read.csv("../data_by_site/MF1.csv")
+mf2 <- read.csv("../data_by_site/MF2.csv")
+nf6_2011 <- read.csv("../data_by_site/NF6-2011.csv")
+p1 <- read.csv("../data_by_site/P1.csv")
+p2 <- read.csv("../data_by_site/P2.csv")
+nf3nf5_2008 <- read.csv("../data_by_site/NF3NF5-2008.csv")
+
+#excluded Finca site from analysis
+#nf7ab_2008 <- read.csv("../data_by_site/NF7AB-2008.csv") 
+
+#combine into single data object
+dat <- rbind(nf4_2011, nf1_2003, nf2, mf1, mf2, nf6_2011, p1, p2, nf3nf5_2008)
+```
+
+Load the datasheet containing key to codes.
+
+```{r}
+codes <- read.csv("../data_by_site/CODES.csv")
+```
+
+## Process data
+
+Initial basic cleaning actions:
+
+```{r}
+#convert date to R date format
+dat$date <- as.Date(dat$date, format = "%d-%b-%y")
+
+#convert year planted from numeric to factor
+dat$year_planted <- as.factor(dat$year_planted) 
+
+#fix 2 NA values for year in LC NF2
+dat$year_planted[is.na(dat$year_planted)] <- "2003"
+
+#reorder the levels of the year factor variable to make plots nicer
+levels(dat$year_planted) <- c("0", "2011", "2008", "2003", "old")
+
+#fix weird transect coding
+dat$transect[dat$transect == "P1(N)"] <- "P1"
+dat$transect[dat$transect == "P1 (N)"] <- "P1"
+```
+
+Subset the dataset to only include those individuals that were observed within 25m of the sample point.
+
+```{r}
+dat_close <- dat[dat$dist == "<25",]
+```
+
+Further subset to exclude those species whose behavior was coded as "pass through" since they were'nt truly using the habitat.
+
+```{r}
+dat_close_use <- dat_close[dat_close$beh != "pt",]
+```
+
+Now we need to join the species coding information with the database so that we have feeding guild and migratory status associated with each observation.
+
+```{r}
+dat_join <- dat_close_use %>%
+  inner_join(., codes, by = "species")
+```
+
+Finally, we'll simplify the migratory guild data to only include 3 groups: "resident", "migratory", or "nomadic".
+
+```{r}
+dat_join$mig_code <- unlist(combineMigCats(x = dat_join$mig_guild))
+```
+
+# Analyisis
+
+## Abundance
+
+Now we're ready for some anlyeses.  Let's first build some really basic models and plots to see if there is an effect of treatment on the total number of birds seen (having excluded pass throughs, and those observed >25m from the observer).
+
+This next code chunk counts up the number of observations grouped by transect and date (so for each transect-day, we get the total number of birds)
+
+```{r}
+mod1_counts <- dat_join %>%
+  group_by(transect, year_planted) %>%
+  count(date)
+```
+
+We can fit two pretty simple generalized linear models to this.  One is the simple intercept model, the other is modeling the abundance during each survey as a function of successional stage (measured as a factor variable).  Each model includes date as a random effect on the intercept - basically saying that there may be more or less birds on a given day). WE don't have enough observations to allow for day to modify how succession effects the count (e.g., cant' do random effect on slope). We'll first just look at the AICc-based selection table.
+
+```{r}
+#intercept ("dot") model
+f0 <- lmer(n ~ 1 + (1|date), data = mod1_counts, REML = F)
+#succession effect model
+f1 <- lmer(n ~ year_planted + (1 |date), data = mod1_counts, REML = F)
+
+aictab(list("dot" = f0, "succession" = f1))
+
+```
+
+Clear information theoretic support for the succession model.  Let's now evaluate the model. By looking at the summary and a residuals plot. First though we need to refit the models using REML instead of ML.  ML is needed to use AICc but produces biased coefficient estimates.
+
+```{r}
+#intercept ("dot") model
+f0 <- lmer(n ~ 1 + (1|date), data = mod1_counts)
+#succession effect model
+f1 <- lmer(n ~ year_planted + (1 |date), data = mod1_counts)
+```
+
+
+```{r}
+summary(f1)
+plot(f1)
+qqnorm(resid(f1))
+qqline(resid(f1))
+```
+
+The residuals don't look great, but not horrible either - need to think more about what might be going on, but there seems like there might be some structure where we see residual bias at the highest predicted values. It might also be because we're technically using a model that assumes normality of residuals with count data which we could also model as a Poisson.  That said, think about Gary White's talk at RRF and his paper that showed sometimes the normal model is actually more robust than the Posson even for known Poisson-generated data.  I think the residuals look OK enough to keep going.
+
+The actual fixed effect coefficient estimates are also a bit confusing in their trend, but at least they are larger than their standard error (except or old) - let's make some plots to look at these graphically.
+
+```{r}
+#make some model fited values
+f1_pred <- ggpredict(f1, terms = c("year_planted"))
+
+ggplot() +
+  geom_point(data = mod1_counts, aes(x = year_planted, y = n, fill = date, 
+                                     color = date),
+             alpha = .3) +
+  geom_point(data = f1_pred, aes(x = x, y = predicted), shape = 15, size = 3) +
+  geom_errorbar(data = f1_pred, aes(x = x, ymax = conf.high, ymin = conf.low),
+                width = .2) +
+  theme_minimal()
+```
+
+The above plot shows the raw count data (in the blue points) colored by date. The black squares represent the model estimate for each succession class (think of this as the mean correcetd for day effects).  The error bars ar 95% CIs.  Hard to see a trend I'd be confident in here.  I think the model is winning due to overfitting (the model, in the end includes 7 parameters for ~65 observations, that's not great...  I trust the graph more.)
+
+## Migratory status
+
+Instead of raw abundance, let's look at the proportion of migrants versus residents. Let's just make the simplest version of the dataset and plot.
+
+```{r}
+
+#break down mean counts per mig guild
+mig_counts <- dat_join %>%
+  group_by(year_planted, transect, mig_code) %>%
+  count(date)  %>%
+  ungroup() %>% 
+  complete(nesting(year_planted, transect, date), mig_code, 
+           fill = list("n" = 0)) 
+
+mig_prop <- mig_counts %>%
+  group_by(year_planted, mig_code) %>% 
+  summarise(m_count = mean(n), se = sd(n)/length(n))
+
+mig_date <- mig_counts %>%
+  group_by(year_planted, date, mig_code) %>% 
+  summarise(m_count = mean(n), se = sd(n)/length(n))
+
+ggplot(mig_prop) +
+  geom_bar(aes(x=year_planted, y = m_count, fill = mig_code), 
+           position = "fill", stat = "identity")
+```
+
+Bu the above doesn't account for date yet, which we probably should do...
+
+First a couple plots of counts by date separated by mig code and succession treatment:
+
+```{r}
+ggplot(mig_counts) +
+  geom_point(aes(x = date, y = n, group = mig_code, 
+                color = mig_code)) +
+  facet_wrap(~year_planted)
+
+ggplot(mig_date) +
+  geom_line(aes(x = date, y = m_count, group = mig_code, 
+                color = mig_code))
+```
+FIt some candidate models:
+
+```{r}
+f2 <- lmer(n ~ 1 + (1|date), data = mig_counts, REML = F)
+f3 <- lmer(n ~ year_planted*mig_code  + (1|date), data = mig_counts,
+           REML = F)
+f4 <- lmer(n ~ mig_code  + (1|date), data = mig_counts, REML = F)
+
+
+
+aictab(list("dot" = f2, "succesion X mig" = f3, "mig" = f4))
+
+```
+
+Let's look at the summary of our best model (spiler: it's just overfitting):
+```{r}
+f3 <- lmer(n ~ year_planted*mig_code  + (1|date), data = mig_counts)
+summary(f3)
+```
+Let's also look at mig only:
+```{r}
+f4 <- lmer(n ~ mig_code  + (1|date), data = mig_counts, REML = F)
+summary(f4)
+```
+
+This model actually looks fine, but all it tells us really is that residents are more common than migrants.
+
+## Foraging Guild
+
+I don't think we need to even bother - if the migratory status is overfitting, a factor variable with even more categories won't perform any better.
+
+# Preliminary Conclusions
+
+This is a work in progress, but here's what I'm thinking for now.  There's a bump in both abundance and proportion of migrants in the 2011 treatment.  We'll need to appropriately caveat, because with the small sample size, one or a few days could be driving thism.  That said, there could be a story here.  We wouln't necessarily expect the most migrants in pasture because that'sa actually a totally different habitat type.  So you would expect the most migrants in the earliest successional stages, which is exactly what we see.  What's surprising, is that th trend appears to be nonlinear - it really onlyholds for the earliest successional habitats and after that, there is no discernable difference when compared to uncut forest.
+
+Here's another way of looking at it - we fit a separate loess smoother over the counts by date grouped by treatment and mig code.  It makes the influx of migrants late winter into early spring more obvious than when looking at the raw data.  This smoother doesn't show what our model did exactly (we don't have enough data to model this exactly, but it at least makes it visible to us).
+
+```{r}
+ggplot(mig_counts, aes(x = date, y = n, group = mig_code, 
+                color = mig_code)) +
+  # geom_line(data = cbind(mig_counts[!is.na(mig_counts$date),], 
+  #                        pred = predict(f3)), aes(y = pred), 
+            # size = 1) +  # adding predicted line from mixed model 
+  geom_smooth(method = "loess") +
+  ylim(c(0,20)) +
+  facet_wrap(~year_planted)
+```
+

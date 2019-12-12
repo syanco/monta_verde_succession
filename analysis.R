@@ -2,6 +2,7 @@
 library(dplyr)
 library(ggplot2)
 library(lme4)
+library(AICcmodavg)
 
 #### CUSTOM FUNCTIONS ####
 
@@ -39,7 +40,7 @@ dat_close <- dat[dat$dist == "<25",]
 dat_join <- dat_close %>%
   inner_join(., codes, by = "species")
 
-foo <- Vectorize(vectorize.args = "x",
+combineMigCats <- Vectorize(vectorize.args = "x",
                                FUN = function(x) {
                                  switch(as.character(x), 
                             "altitudinal" = "mig",
@@ -49,7 +50,7 @@ foo <- Vectorize(vectorize.args = "x",
                             "resident" = "res",
                             "NA" = NA)})
 
-dat_join$mig_code <- unlist(foo(x = dat_join$mig_guild))
+dat_join$mig_code <- unlist(comineMigCats(x = dat_join$mig_guild))
 
 mod1_counts <- dat_join %>%
   group_by(transect, year_planted) %>%
@@ -57,7 +58,9 @@ mod1_counts <- dat_join %>%
 
 f0 <- lmer(n ~ 1 + (1|date), data = mod1_counts)
 f1 <- lmer(n ~ year_planted + (1|date), data = mod1_counts)
-summary(f0)
+
+aictab(list("dot" = f0, "succession" = f1))
+
 summary(f1)
 
 AIC(f0)
