@@ -1,7 +1,7 @@
 ---
 title: "Monta Verde Succession"
 author: "Scott Yanco"
-date: "December 11, 2019"
+date: "December 12, 2019"
 output: html_document
 ---
 
@@ -34,15 +34,31 @@ combineMigCats <- Vectorize(vectorize.args = "x",
                             "altitudinal" = "mig",
                             "long-distance" = "mig",
                             "short-distance" = "mig",
-                            "nomadic" = "nomadic",
+                            "nomadic" = "mig",
                             "resident" = "res",
                             "NA" = NA)})
+
+combineGuildCats <- Vectorize(vectorize.args = "x",
+                               FUN = function(x) {
+                                 switch(as.character(x), 
+                            "carnivore" = "specialist",
+                            "frugivore" = "specialist",
+                            "granivore" = "specialist",
+                            "herbivore" = "specialist",
+                            "insectivore" = "specialist",
+                            "nectarivore" = "specialist",
+                            "nectarivore (omnivore?)" = "omnivore",
+                            "omnivore" = "omnivore",
+                            "scavenger" = "omnivore")})
 ```
 
 
 # Import and Process Data
 
 ## Load data
+
+### Bird Data
+
 First load all the point count data and combine into a single data frame.
 
 ```{r}
@@ -70,6 +86,26 @@ Load the datasheet containing key to codes.
 codes <- read.csv("../data_by_site/CODES.csv")
 ```
 
+### Vegetation Data
+
+Load in the tree data:
+
+```{r}
+trees <- read.csv("../trees_nofinca_121219.csv")
+
+#set factor order
+trees$treatment <- factor(trees$treatment, levels = c("0", "2011", "2008", "2003", "old"))
+```
+
+Load in densiometer data (values represent open "dots"):
+
+```{r}
+dens <- read.csv("../dens_nofinca.csv")
+
+#set factor order
+dens$treatment <- factor(dens$treatment, levels = c("0", "2011", "2008", "2003", "old"))
+```
+
 ## Process data
 
 Initial basic cleaning actions:
@@ -90,6 +126,8 @@ levels(dat$year_planted) <- c("0", "2011", "2008", "2003", "old")
 #fix weird transect coding
 dat$transect[dat$transect == "P1(N)"] <- "P1"
 dat$transect[dat$transect == "P1 (N)"] <- "P1"
+dat$transect <- droplevels(dat$transect)
+levels(dat$transect) 
 ```
 
 Subset the dataset to only include those individuals that were observed within 25m of the sample point.
@@ -111,10 +149,12 @@ dat_join <- dat_close_use %>%
   inner_join(., codes, by = "species")
 ```
 
-Finally, we'll simplify the migratory guild data to only include 3 groups: "resident", "migratory", or "nomadic".
+Finally, we'll simplify the migratory guild data to only include 3 groups: "resident", "migratory", or "nomadic"; and simplify feeding guilds into "omnovore" or "specialist". 
 
 ```{r}
 dat_join$mig_code <- unlist(combineMigCats(x = dat_join$mig_guild))
+
+dat_join$guild_code <- unlist(combineGuildCats(x = dat_join$feed_guild))
 ```
 
 # Analyisis
@@ -149,7 +189,7 @@ Clear information theoretic support for the succession model.  Let's now evaluat
 #intercept ("dot") model
 f0 <- lmer(n ~ 1 + (1|date), data = mod1_counts)
 #succession effect model
-f1 <- lmer(n ~ year_planted + (1 |date), data = mod1_counts)
+f1 <- lmer(n ~ 0+year_planted + (1 |date), data = mod1_counts)
 ```
 
 
@@ -160,9 +200,9 @@ qqnorm(resid(f1))
 qqline(resid(f1))
 ```
 
-The residuals don't look great, but not horrible either - need to think more about what might be going on, but there seems like there might be some structure where we see residual bias at the highest predicted values. It might also be because we're technically using a model that assumes normality of residuals with count data which we could also model as a Poisson.  That said, think about Gary White's talk at RRF and his paper that showed sometimes the normal model is actually more robust than the Posson even for known Poisson-generated data.  I think the residuals look OK enough to keep going.
+The residuals don't look great, but not horrible either - need to think more about what might be going on, but there seems like there might be some structure where we see residual bias at the highest predicted values. It might also be because we're technically using a model that assumes normality of residuals with count data which we could also model as a Poisson.  That said, think about Gary White's talk at RRF and his paper that showed sometimes the normal model is actually more robust than the Poisson even for known-Poisson-generated data.  I think the residuals look OK enough to keep going.
 
-The actual fixed effect coefficient estimates are also a bit confusing in their trend, but at least they are larger than their standard error (except or old) - let's make some plots to look at these graphically.
+The actual fixed effect coefficient estimates are also a bit confusing in their trend, but at least they are larger than their standard error (except for old) - let's make some plots to look at these graphically.
 
 ```{r}
 #make some model fited values
@@ -171,14 +211,15 @@ f1_pred <- ggpredict(f1, terms = c("year_planted"))
 ggplot() +
   geom_point(data = mod1_counts, aes(x = year_planted, y = n, fill = date, 
                                      color = date),
-             alpha = .3) +
+             alpha = .6) +
   geom_point(data = f1_pred, aes(x = x, y = predicted), shape = 15, size = 3) +
   geom_errorbar(data = f1_pred, aes(x = x, ymax = conf.high, ymin = conf.low),
                 width = .2) +
+  ylab("Abundance") +
   theme_minimal()
 ```
 
-The above plot shows the raw count data (in the blue points) colored by date. The black squares represent the model estimate for each succession class (think of this as the mean correcetd for day effects).  The error bars ar 95% CIs.  Hard to see a trend I'd be confident in here.  I think the model is winning due to overfitting (the model, in the end includes 7 parameters for ~65 observations, that's not great...  I trust the graph more.)
+The above plot shows the raw count data (in the blue points) colored by date. The black squares represent the model estimate for each succession class (think of this as the mean corrected for day effects).  The error bars ar 95% CIs.  Hard to see a trend I'd be confident in here, other than maybe a boost in abundance at the earliest successional stage.  I think the model is overfit, so the parameter estimates themselves are difficult to have much confidence in (the model, in the end, includes 7 parameters for ~65 observations, that's not great...  I trust the graph more.)
 
 ## Migratory status
 
@@ -204,24 +245,26 @@ mig_date <- mig_counts %>%
 
 ggplot(mig_prop) +
   geom_bar(aes(x=year_planted, y = m_count, fill = mig_code), 
-           position = "fill", stat = "identity")
+           position = "fill", stat = "identity") +
+  ylab("Proportion Birds Observed") +
+  xlab("Treatment") +
+  theme_minimal() +
+  scale_fill_discrete(name = "Migratory Status", 
+                      labels = c("Migrant", "Resident"))
 ```
 
-Bu the above doesn't account for date yet, which we probably should do...
+Interesting that we see a bump in migrants for the 2011 treatment.  But the above doesn't account for date yet, which we probably should do...
 
-First a couple plots of counts by date separated by mig code and succession treatment:
+First a plot of counts by date separated by mig code and succession treatment:
 
 ```{r}
 ggplot(mig_counts) +
   geom_point(aes(x = date, y = n, group = mig_code, 
                 color = mig_code)) +
   facet_wrap(~year_planted)
-
-ggplot(mig_date) +
-  geom_line(aes(x = date, y = m_count, group = mig_code, 
-                color = mig_code))
 ```
-FIt some candidate models:
+
+Now let's fit some candidate model.  First the dot model that includes intercept as a random effect of date; then another model that includes migratory status and treatment as an interactive effect (same random effect of date); and finally one that considers migratory status alone (again with random effect of date). 
 
 ```{r}
 f2 <- lmer(n ~ 1 + (1|date), data = mig_counts, REML = F)
@@ -235,26 +278,150 @@ aictab(list("dot" = f2, "succesion X mig" = f3, "mig" = f4))
 
 ```
 
-Let's look at the summary of our best model (spiler: it's just overfitting):
+Let's look at the summary of our best model (spoiler: it's probably just overfitting):
+
 ```{r}
 f3 <- lmer(n ~ year_planted*mig_code  + (1|date), data = mig_counts)
 summary(f3)
 ```
+
+Note too that the only well-estimated parameters are those having to do with 2011.
+
 Let's also look at mig only:
+
 ```{r}
 f4 <- lmer(n ~ mig_code  + (1|date), data = mig_counts, REML = F)
 summary(f4)
 ```
 
-This model actually looks fine, but all it tells us really is that residents are more common than migrants.
+This model actually looks fine, but all it tells us really is that residents are more common than migrants in general.
 
 ## Foraging Guild
 
-I don't think we need to even bother - if the migratory status is overfitting, a factor variable with even more categories won't perform any better.
+Similar analysis, but for collapsed feeding guild.
+
+```{r}
+
+#break down mean counts per mig guild
+guild_counts <- dat_join %>%
+  group_by(year_planted, transect, guild_code) %>%
+  count(date)  %>%
+  ungroup() %>% 
+  complete(nesting(year_planted, transect, date), guild_code, 
+           fill = list("n" = 0)) 
+
+guild_prop <- guild_counts %>%
+  group_by(year_planted, guild_code) %>% 
+  summarise(m_count = mean(n), se = sd(n)/length(n))
+
+guild_date <- guild_counts %>%
+  group_by(year_planted, date, guild_code) %>% 
+  summarise(m_count = mean(n), se = sd(n)/length(n))
+
+ggplot(guild_prop) +
+  geom_bar(aes(x=year_planted, y = m_count, fill = guild_code), 
+           position = "fill", stat = "identity") +
+  ylab("Proportion Birds Observed") +
+  xlab("Treatment") +
+  theme_minimal() +
+  scale_fill_discrete(name = "Feeding Guild",
+                      labels = c("Omnivore", "Specialist"))
+```
+
+Interesting trend here, but probably not explanatory of the bump for 2011.
+
+## Vegetation
+
+Again, given sample sizes I don't think it makes a ton of sense to model the effect of veg parameters directly (though I'm certainly open to conversation about that...).  But some visualizations to help with the "storytelling" might be useful - let's see what's in the veg data...
+
+```{r}
+trees %>% 
+  group_by(treatment) %>% 
+  summarise(m = mean(ht), se = sd(ht)/length(ht), v = var(ht))
+```
+
+
+Let's look at the distribution of tree heights by treatement.
+
+```{r}
+ggplot() +
+  geom_violin(data = trees, aes(x=treatment, y = ht, fill = treatment)) +
+  geom_point(data = trees[trees$treatment == 0,], aes(x = treatment, y = ht,
+                                                      color = treatment)) +
+  theme_minimal() +
+  ylab("Tree Ht. (cm)") +
+  xlab("Treatment") + 
+  theme(legend.position = "none")
+```
+
+That's pretty interesting, again, the only real standout is the 2011 treatment - 2003 and 2008 look more similar to old than 2011 - just missing the far end of the tail.
+
+We can do the same thig with DBH data too :
+
+```{r}
+ggplot() +
+  geom_violin(data = trees, aes(x=treatment, y = dbh, fill = treatment)) +
+  geom_point(data = trees[trees$treatment == 0,], aes(x = treatment, y = dbh,
+                                                      color = treatment)) +
+  theme_minimal() +
+  ylab("Tree DBH (cm)") +
+  xlab("Treatment") + 
+  theme(legend.position = "none")
+```
+
+Pretty cool looking graph but I think 2011 doesn't jump out to me the way it does for tree height.
+
+Pulling the densiometer data:
+
+
+```{r}
+ggplot() +
+  geom_point(data = dens, aes(x = treatment, y = dens_mean, 
+                              color = treatment)) +
+  theme_minimal() +
+  ylab("Canopy Openness") +
+  xlab("Treatment") + 
+  theme(legend.position = "none")
+```
+
+## Diversity
+
+Create presence/absence dataset filling in implied "0"s.
+
+```{r}
+occur <- dat_join
+occur$pres <- 1
+
+ocurr_sites <- occur %>%
+  complete(species, nesting(transect, year_planted), fill = list("pres" = 0)) 
+
+ocurr_visits <- occur %>%
+  complete(species, nesting(transect, date, year_planted), 
+           fill = list("pres" = 0)) 
+```
+
+First let's look at raw species richness by site:
+
+```{r}
+rich <- ocurr_sites %>% 
+  group_by(transect, year_planted) %>%
+  distinct(species, transect, year_planted, pres) %>% 
+  tally(wt = pres)
+
+rich %>% 
+  group_by(year_planted) %>% 
+  summarise(mean(n))
+
+ggplot(rich) +
+  geom_point(aes(x = year_planted, y = n))
+```
+
 
 # Preliminary Conclusions
 
-This is a work in progress, but here's what I'm thinking for now.  There's a bump in both abundance and proportion of migrants in the 2011 treatment.  We'll need to appropriately caveat, because with the small sample size, one or a few days could be driving thism.  That said, there could be a story here.  We wouln't necessarily expect the most migrants in pasture because that'sa actually a totally different habitat type.  So you would expect the most migrants in the earliest successional stages, which is exactly what we see.  What's surprising, is that th trend appears to be nonlinear - it really onlyholds for the earliest successional habitats and after that, there is no discernable difference when compared to uncut forest.
+This is a work in progress, but here's what I'm thinking for now.  There's a bump in both abundance and proportion of migrants in the 2011 treatment.  We'll need to appropriately caveat because, with the small sample size, one or a few days could be driving this (though I think the panel plot helps make the case it's a real trend).  That said, there could be a story here.  We wouldn't necessarily expect the most migrants in pasture because that's actually a totally different habitat type.  So you would expect the most migrants in the earliest successional stages, which is exactly what we see.  What's surprising, is that the trend appears to be nonlinear - it really only holds for the earliest successional habitats and after that, there is no discernable difference when compared to uncut forest. 
+
+The tree height plot helps us disentangle that a bit more - the distribution of tree heights is really different in the 2011 plot compared to the other successional stages or the mature forest.
 
 Here's another way of looking at it - we fit a separate loess smoother over the counts by date grouped by treatment and mig code.  It makes the influx of migrants late winter into early spring more obvious than when looking at the raw data.  This smoother doesn't show what our model did exactly (we don't have enough data to model this exactly, but it at least makes it visible to us).
 
@@ -268,4 +435,8 @@ ggplot(mig_counts, aes(x = date, y = n, group = mig_code,
   ylim(c(0,20)) +
   facet_wrap(~year_planted)
 ```
+
+# Notes
+- Diversity index
+- Check journals:  Biologia Tropical; Journal of Tropical Ecology; JFO; Agirculture, Ecosystems & Environment; Biotropica
 
