@@ -23,6 +23,11 @@ library(AICcmodavg)
 library(ggeffects)
 library(viridis)
 library(tidyr)
+library(betareg)
+library(tibble)
+library(boot)
+library(tidyverse)
+library(vegan)
 ```
 
 Load a custom function that will help us combine initial migratory coding into bigger bins.
@@ -174,10 +179,14 @@ mod1_counts <- dat_join %>%
 We can fit two pretty simple generalized linear models to this.  One is the simple intercept model, the other is modeling the abundance during each survey as a function of successional stage (measured as a factor variable).  Each model includes date as a random effect on the intercept - basically saying that there may be more or less birds on a given day). WE don't have enough observations to allow for day to modify how succession effects the count (e.g., cant' do random effect on slope). We'll first just look at the AICc-based selection table.
 
 ```{r}
+# f0 <- lmer(n ~ 0 + (1|date), data = mod1_counts, REML = F)
+# #succession effect model
+# f1 <- lmer(n ~ 0 + year_planted + (1 |date), data = mod1_counts, REML = F)
+
 #intercept ("dot") model
-f0 <- lmer(n ~ 1 + (1|date), data = mod1_counts, REML = F)
+f0 <- glmer(n ~ 0 + (1|date), data = mod1_counts, family = "poisson")
 #succession effect model
-f1 <- lmer(n ~ year_planted + (1 |date), data = mod1_counts, REML = F)
+f1 <- glmer(n ~ 0 + year_planted + (1 |date), data = mod1_counts, , family = "poisson")
 
 aictab(list("dot" = f0, "succession" = f1))
 
@@ -187,9 +196,9 @@ Clear information theoretic support for the succession model.  Let's now evaluat
 
 ```{r}
 #intercept ("dot") model
-f0 <- lmer(n ~ 1 + (1|date), data = mod1_counts)
+f0 <- glmer(n ~ 1 + (1|date), data = mod1_counts, family = "poisson")
 #succession effect model
-f1 <- lmer(n ~ 0+year_planted + (1 |date), data = mod1_counts)
+f1 <- glmer(n ~ 1 + year_planted + (1 |date), data = mod1_counts, family = "poisson")
 ```
 
 
@@ -198,6 +207,16 @@ summary(f1)
 plot(f1)
 qqnorm(resid(f1))
 qqline(resid(f1))
+
+(f1.ci <- exp(confint(f1, oldNames = F)))
+
+(f1.coef <- exp(f1@beta))
+
+f1est <- data.frame(coef = f1.coef, ci.low = f1.ci[2:6,1], ci.hi = f1.ci[2:6,2],
+                    year_planted = 
+                      ordered(c("Pasture", "2011", "2008", "2003", "old"),
+                              levels = c("Pasture", "2011", "2008", "2003", 
+                                         "old")))
 ```
 
 The residuals don't look great, but not horrible either - need to think more about what might be going on, but there seems like there might be some structure where we see residual bias at the highest predicted values. It might also be because we're technically using a model that assumes normality of residuals with count data which we could also model as a Poisson.  That said, think about Gary White's talk at RRF and his paper that showed sometimes the normal model is actually more robust than the Poisson even for known-Poisson-generated data.  I think the residuals look OK enough to keep going.
@@ -209,11 +228,9 @@ The actual fixed effect coefficient estimates are also a bit confusing in their 
 f1_pred <- ggpredict(f1, terms = c("year_planted"))
 
 ggplot() +
-  geom_point(data = mod1_counts, aes(x = year_planted, y = n, fill = date, 
-                                     color = date),
-             alpha = .6) +
-  geom_point(data = f1_pred, aes(x = x, y = predicted), shape = 15, size = 3) +
-  geom_errorbar(data = f1_pred, aes(x = x, ymax = conf.high, ymin = conf.low),
+  geom_point(data = f1est, aes(x = year_planted, y = coef), alpha = .6) +
+  geom_errorbar(data = f1est, 
+                aes(x = year_planted, ymax = ci.hi, ymin = ci.low),
                 width = .2) +
   ylab("Abundance") +
   theme_minimal()
@@ -229,10 +246,10 @@ Instead of raw abundance, let's look at the proportion of migrants versus reside
 
 #break down mean counts per mig guild
 mig_counts <- dat_join %>%
-  group_by(year_planted, transect, mig_code) %>%
-  count(date)  %>%
+  group_by(year_planted, transect, date, mig_code) %>%
+  count(start_time)  %>%
   ungroup() %>% 
-  complete(nesting(year_planted, transect, date), mig_code, 
+  complete(nesting(year_planted, transect, date, start_time), mig_code, 
            fill = list("n" = 0)) 
 
 mig_prop <- mig_counts %>%
@@ -243,6 +260,11 @@ mig_date <- mig_counts %>%
   group_by(year_planted, date, mig_code) %>% 
   summarise(m_count = mean(n), se = sd(n)/length(n))
 
+mig_beta <- dat_join %>% 
+  group_by(year_planted, transect, date, start_time) %>% 
+  summarise(mig = sum(mig_code == "mig"), res = sum(mig_code == "res")) %>% 
+  mutate(prop = mig/(mig+res), trials = (mig+res)) 
+  
 ggplot(mig_prop) +
   geom_bar(aes(x=year_planted, y = m_count, fill = mig_code), 
            position = "fill", stat = "identity") +
@@ -253,48 +275,49 @@ ggplot(mig_prop) +
                       labels = c("Migrant", "Resident"))
 ```
 
-Interesting that we see a bump in migrants for the 2011 treatment.  But the above doesn't account for date yet, which we probably should do...
-
-First a plot of counts by date separated by mig code and succession treatment:
+First a couple plots by date separated by mig code and succession treatment:
 
 ```{r}
 ggplot(mig_counts) +
   geom_point(aes(x = date, y = n, group = mig_code, 
                 color = mig_code)) +
   facet_wrap(~year_planted)
-```
 
-Now let's fit some candidate model.  First the dot model that includes intercept as a random effect of date; then another model that includes migratory status and treatment as an interactive effect (same random effect of date); and finally one that considers migratory status alone (again with random effect of date). 
+ggplot(mig_beta) +
+  geom_point(aes(x = date, y = prop)) +
+  ylab("Proportion Migrants") +
+  facet_wrap(~year_planted, nrow =1)
+```
 
 ```{r}
-f2 <- lmer(n ~ 1 + (1|date), data = mig_counts, REML = F)
-f3 <- lmer(n ~ year_planted*mig_code  + (1|date), data = mig_counts,
-           REML = F)
-f4 <- lmer(n ~ mig_code  + (1|date), data = mig_counts, REML = F)
+mean.fun <- function(dat, idx) mean(dat[idx], na.rm = TRUE)
 
+boot.prop <- sapply(unique(mig_beta$year_planted), FUN = function(x){
+ out <- boot(mig_beta$prop[mig_beta$year_planted == x], mean.fun, R=10000, 
+              sim = "ordinary")
+  }, simplify = F)
 
+            
+cis <- sapply(boot.prop, FUN = function(x){boot.ci(boot.out = x, type="bca")},
+              simplify = F)
+unique(mig_beta$year_planted)
+cis
 
-aictab(list("dot" = f2, "succesion X mig" = f3, "mig" = f4))
-
+mig.df <- data.frame(year_planted = unique(mig_beta$year_planted),
+                     mean = sapply(cis, function(x){x$t0}),
+                     ci.low = sapply(cis, function(x){x$bca[4]}),
+                     ci.hi = sapply(cis, function(x){x$bca[5]}))
 ```
-
-Let's look at the summary of our best model (spoiler: it's probably just overfitting):
-
+ Plot:
 ```{r}
-f3 <- lmer(n ~ year_planted*mig_code  + (1|date), data = mig_counts)
-summary(f3)
+ggplot(mig.df) +
+  geom_point(aes(x=year_planted, y = mean)) +
+  geom_errorbar(aes(x=year_planted, ymin = ci.low, ymax = ci.hi), width =.1) +
+  ylab("Proportion Migrants") +
+  xlab("Successional Stage") +
+  theme_minimal()
 ```
 
-Note too that the only well-estimated parameters are those having to do with 2011.
-
-Let's also look at mig only:
-
-```{r}
-f4 <- lmer(n ~ mig_code  + (1|date), data = mig_counts, REML = F)
-summary(f4)
-```
-
-This model actually looks fine, but all it tells us really is that residents are more common than migrants in general.
 
 ## Foraging Guild
 
@@ -309,6 +332,12 @@ guild_counts <- dat_join %>%
   ungroup() %>% 
   complete(nesting(year_planted, transect, date), guild_code, 
            fill = list("n" = 0)) 
+
+guild_beta <- dat_join %>% 
+  group_by(year_planted, transect, date, start_time) %>% 
+  summarise(omni = sum(guild_code == "omnivore"), 
+            spec = sum(guild_code == "specialist")) %>% 
+  mutate(prop = spec/(spec+omni), trials = (spec+omni)) 
 
 guild_prop <- guild_counts %>%
   group_by(year_planted, guild_code) %>% 
@@ -328,16 +357,57 @@ ggplot(guild_prop) +
                       labels = c("Omnivore", "Specialist"))
 ```
 
-Interesting trend here, but probably not explanatory of the bump for 2011.
+```{r}
+ggplot(guild_counts) +
+  geom_point(aes(x = date, y = n, group = guild_code, 
+                color = guild_code)) +
+  facet_wrap(~year_planted)
 
+ggplot(guild_beta) +
+  geom_point(aes(x = date, y = prop)) +
+  ylab("Proportion Specialists") +
+  facet_wrap(~year_planted, nrow =1)
+```
+```{r}
+mean.fun <- function(dat, idx) mean(dat[idx], na.rm = TRUE)
+
+boot.prop <- sapply(unique(guild_beta$year_planted), FUN = function(x){
+ out <- boot(guild_beta$prop[guild_beta$year_planted == x], mean.fun, R=10000, 
+              sim = "ordinary")
+  }, simplify = F)
+
+            
+cis.guild <- sapply(boot.prop, FUN = function(x){boot.ci(boot.out = x, type="bca")},
+              simplify = F)
+unique(guild_beta$year_planted)
+cis.guild
+
+guild.df <- data.frame(year_planted = unique(guild_beta$year_planted),
+                     mean = sapply(cis.guild, function(x){x$t0}),
+                     ci.low = sapply(cis.guild, function(x){x$bca[4]}),
+                     ci.hi = sapply(cis.guild, function(x){x$bca[5]}))
+```
+ Plot:
+```{r}
+ggplot(guild.df) +
+  geom_point(aes(x=year_planted, y = mean)) +
+  geom_errorbar(aes(x=year_planted, ymin = ci.low, ymax = ci.hi), width =.1) +
+  ylab("Proportion Specialists") +
+  xlab("Successional Stage") +
+  ylim(0,1) +
+  theme_minimal()
+```
 ## Vegetation
 
 Again, given sample sizes I don't think it makes a ton of sense to model the effect of veg parameters directly (though I'm certainly open to conversation about that...).  But some visualizations to help with the "storytelling" might be useful - let's see what's in the veg data...
 
 ```{r}
+library(moments)
 trees %>% 
   group_by(treatment) %>% 
-  summarise(m = mean(ht), se = sd(ht)/length(ht), v = var(ht))
+  summarise(m = mean(ht), se = sd(ht)/length(ht), v = var(ht), 
+            skew = skewness(ht), kurt = kurtosis(ht),
+            range.low = range(ht)[1], range.hi = range(ht)[2])
 ```
 
 
@@ -347,7 +417,8 @@ Let's look at the distribution of tree heights by treatement.
 ggplot() +
   geom_violin(data = trees, aes(x=treatment, y = ht, fill = treatment)) +
   geom_point(data = trees[trees$treatment == 0,], aes(x = treatment, y = ht,
-                                                      color = treatment)) +
+                                                      fill = treatment)) +
+  scale_fill_grey(start = .9, end = 0) +
   theme_minimal() +
   ylab("Tree Ht. (cm)") +
   xlab("Treatment") + 
@@ -376,8 +447,7 @@ Pulling the densiometer data:
 
 ```{r}
 ggplot() +
-  geom_point(data = dens, aes(x = treatment, y = dens_mean, 
-                              color = treatment)) +
+  geom_point(data = dens, aes(x = treatment, y = dens_mean)) +
   theme_minimal() +
   ylab("Canopy Openness") +
   xlab("Treatment") + 
@@ -393,11 +463,8 @@ occur <- dat_join
 occur$pres <- 1
 
 ocurr_sites <- occur %>%
-  complete(species, nesting(transect, year_planted), fill = list("pres" = 0)) 
-
-ocurr_visits <- occur %>%
-  complete(species, nesting(transect, date, year_planted), 
-           fill = list("pres" = 0)) 
+  complete(nesting(year_planted, transect, date, start_time), species, 
+           fill = list("pres" = 0))
 ```
 
 First let's look at raw species richness by site:
@@ -412,8 +479,198 @@ rich %>%
   group_by(year_planted) %>% 
   summarise(mean(n))
 
+rich.visit <- ocurr_sites %>% 
+  group_by(year_planted, transect, date, start_time) %>%
+  distinct(species, transect, year_planted, pres, start_time) %>% 
+  summarise(sp_count = sum(pres))
+
 ggplot(rich) +
-  geom_point(aes(x = year_planted, y = n))
+  geom_point(aes(x = year_planted, y = n)) +
+  xlab("Successional Stage") +
+  ylab("Total Species Richness") +
+  theme_minimal()
+
+ggplot(rich.visit) +
+  geom_point(aes(x = date, y = sp_count, color = transect)) +
+  facet_wrap(~year_planted, nrow = 1) +
+  xlab("Successional Stage") +
+  ylab("Total Species Richness") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+mean.fun <- function(dat, idx) mean(dat[idx], na.rm = TRUE)
+
+boot.sp <- sapply(unique(rich.visit$year_planted), FUN = function(x){
+ out <- boot(rich.visit$sp_count[rich.visit$year_planted == x], mean.fun, 
+             R=10000, sim = "ordinary")
+  }, simplify = F)
+
+            
+cis.sp <- sapply(boot.sp, FUN = function(x){boot.ci(boot.out = x, type="bca")},
+              simplify = F)
+unique(rich.visit$year_planted)
+cis.sp
+
+rich.df <- data.frame(year_planted = unique(rich.visit$year_planted),
+                     mean = sapply(cis.sp, function(x){x$t0}),
+                     ci.low = sapply(cis.sp, function(x){x$bca[4]}),
+                     ci.hi = sapply(cis.sp, function(x){x$bca[5]}))
+```
+ Plot:
+```{r}
+ggplot(rich.df) +
+  geom_point(aes(x=year_planted, y = mean)) +
+  geom_errorbar(aes(x=year_planted, ymin = ci.low, ymax = ci.hi), width =.1) +
+  ylab("Species Richness per Point Count") +
+  xlab("Successional Stage") +
+  theme_minimal()
+```
+
+## Species composition (NMDS)
+
+
+```{r}
+comm_dat <- dat_join %>% 
+  group_by(year_planted, transect, date, start_time, species) %>% 
+  count() %>% 
+  ungroup() %>%
+  group_by(year_planted, transect, species) %>%
+  summarise(m_abund = mean(n)) %>%
+  ungroup()
+
+comm_mat <- comm_dat %>% 
+  spread(species, m_abund, fill=0) %>% 
+  column_to_rownames(var="transect") %>% 
+  select(-c(year_planted)) %>% 
+  as.matrix
+
+comm_pres <- t(apply(comm_mat, MARGIN = c(1,2), FUN = function(x) {
+  (if(x >= 1){1}else{0})
+}))
+
+write.csv(comm_pres, "pres-abs_table_020720.csv")
+
+mat_key <-   comm_dat %>% 
+  spread(species, m_abund, fill=0) %>% 
+  column_to_rownames(var="transect")
+```
+
+```{r}
+NMDS <- metaMDS(comm_mat,  k=2, trymax = 250, maxit = 999)
+```
+
+Plots
+
+```{r}
+#extract NMDS scores (x and y coordinates)
+data.scores <- as.data.frame(scores(NMDS))
+data.scores$year_planted <- mat_key$year_planted
+
+species.score <- as.data.frame(NMDS$species) %>% 
+  rownames_to_column(var = "species") %>% 
+  left_join(codes, by = "species") %>% 
+  select(species, MDS1, MDS2, mig_guild)
+
+species.score$mig_code <- unlist(combineMigCats(x = species.score$mig_guild))  
+
+ggplot() +
+  geom_point(data = data.scores, aes(x = NMDS1, y = NMDS2, group = year_planted,
+                                     shape = year_planted), 
+               color = "black", size = 5) +
+  geom_point(data = species.score, aes(x=MDS1, y = MDS2, color = mig_code)) +
+  #geom_label(data = species.score, aes(x=MDS1, y = MDS2, label = species)) +
+  theme_minimal()
+
+```
+
+### Do it again but use each transect
+
+```{r}
+comm_dat <- dat_join %>% 
+  group_by(year_planted, transect, date, start_time, species) %>% 
+  count() %>% 
+  ungroup()
+
+comm_mat <- comm_dat %>% 
+  spread(species, n, fill=0) %>% 
+  select(-c(year_planted, transect, date, start_time)) %>% 
+  as.matrix
+
+mat_key <- comm_dat %>% 
+  spread(species, n, fill=0)
+```
+
+```{r}
+
+#NOT CONVERGING
+NMDS <- metaMDS(comm_mat,  k=2, trymax = 250, maxit = 999)
+```
+
+Plots
+
+```{r}
+#extract NMDS scores (x and y coordinates)
+data.scores <- as.data.frame(scores(NMDS))
+data.scores$year_planted <- mat_key$year_planted
+
+species.score <- as.data.frame(NMDS$species) %>% 
+  rownames_to_column(var = "species") %>% 
+  left_join(codes, by = "species") %>% 
+  select(species, MDS1, MDS2, mig_guild)
+
+species.score$mig_code <- unlist(combineMigCats(x = species.score$mig_guild))  
+
+ggplot() +
+  geom_point(data = data.scores, aes(x = NMDS1, y = NMDS2, group = year_planted,
+                                     shape = year_planted), 
+               color = "black", size = 5) +
+  geom_point(data = species.score, aes(x=MDS1, y = MDS2, color = mig_code)) +
+  theme_minimal()
+
+```
+```{r}
+colvec <- c("gray0", "gray0", "gray49", "gray49")   # Identifies colors for group assignments
+pchvec <- c(21, 22, 23, 24, 35)   # Identifies character symbols for group assignments
+
+plot(NMDS)
+with(key,
+     points(NMDS,
+            display = "sites",
+            col = "black",
+            pch = pchvec[transect])
+
+#Create convex hulls that highlight point clusters based on grouping dataframe
+ordihull(
+  NMDS,
+  key$transect,
+  display = "sites",
+  draw = c("polygon"),
+  col = NULL,
+  border = c("gray0", "gray0", "gray48", "gray48"),
+  lty = c(1, 2, 1, 2),
+  lwd = 2.5
+  )
+
+# # Calculating centroids 
+# 
+# # You can calculate centroids for your groups which can be viewed as the average position of observations in ordination space. 
+# 
+# # Calculating and plotting centroids of NMDS Result
+# scrs <-
+#   scores(island.spp_NMS, display = "sites", "species")
+# cent <-
+#   aggregate(scrs ~ habitat, data = island.spp_groups, FUN = "mean")
+# names(cent) [-1] <- colnames(scrs)
+# points(cent [,-1],
+#        pch = c( 8 , 8 , 8, 8),
+#        col = c("gray0", "gray0", "gray48", "gray48"),
+#        bg = c("black"),
+#        lwd = 3.0,
+#        cex = 2.0 # Plots centroids as points on ordination
+#        )
+
 ```
 
 
