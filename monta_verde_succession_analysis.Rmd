@@ -30,6 +30,9 @@ library(tidyverse)
 library(vegan)
 library(ggthemes)
 library(gridExtra)
+library(ggrepel)
+library(hms)
+library(lubridate)
 ```
 
 Load a custom function that will help us combine initial migratory coding into bigger bins.
@@ -70,15 +73,15 @@ First load all the point count data and combine into a single data frame.
 
 ```{r}
 #load site data
-nf4_2011 <- read.csv("../data_by_site/NF4-2011.csv")
-nf1_2003 <- read.csv("../data_by_site/NF1-2003.csv")
-nf2 <- read.csv("../data_by_site/NF2.csv")
-mf1 <- read.csv("../data_by_site/MF1.csv")
-mf2 <- read.csv("../data_by_site/MF2.csv")
-nf6_2011 <- read.csv("../data_by_site/NF6-2011.csv")
-p1 <- read.csv("../data_by_site/P1.csv")
-p2 <- read.csv("../data_by_site/P2.csv")
-nf3nf5_2008 <- read.csv("../data_by_site/NF3NF5-2008.csv")
+nf4_2011 <- read.csv("../data_by_site/NF4-2011.csv", stringsAsFactors = T)
+nf1_2003 <- read.csv("../data_by_site/NF1-2003.csv", stringsAsFactors = T)
+nf2 <- read.csv("../data_by_site/NF2.csv", stringsAsFactors = T)
+mf1 <- read.csv("../data_by_site/MF1.csv", stringsAsFactors = T)
+mf2 <- read.csv("../data_by_site/MF2.csv", stringsAsFactors = T)
+nf6_2011 <- read.csv("../data_by_site/NF6-2011.csv", stringsAsFactors = T)
+p1 <- read.csv("../data_by_site/P1.csv", stringsAsFactors = T)
+p2 <- read.csv("../data_by_site/P2.csv", stringsAsFactors = T)
+nf3nf5_2008 <- read.csv("../data_by_site/NF3NF5-2008.csv", stringsAsFactors = T)
 
 #excluded Finca site from analysis
 #nf7ab_2008 <- read.csv("../data_by_site/NF7AB-2008.csv") 
@@ -125,6 +128,10 @@ Initial basic cleaning actions:
 #convert date to R date format
 dat$date <- as.Date(dat$date, format = "%d-%b-%y")
 
+dat$start_time <- as_hms(as.POSIXlt(dat$start_time, format = "%H:%M"))
+dat$obs_time <- as_hms(as.POSIXlt(dat$obs_time, format = "%H:%M"))
+
+
 #convert year planted from numeric to factor
 dat$year_planted <- as.factor(dat$year_planted) 
 
@@ -152,6 +159,14 @@ Further subset to exclude those species whose behavior was coded as "pass throug
 ```{r}
 dat_close_use <- dat_close[dat_close$beh != "pt",]
 ```
+
+Subset to first 15 minutes only
+
+```{r}
+dat_close_use <- dat_close_use %>% 
+  filter(abs(start_time-obs_time) <= 900)
+```
+
 
 Now we need to join the species coding information with the database so that we have feeding guild and migratory status associated with each observation.
 
@@ -181,6 +196,7 @@ mod1_counts <- dat_join %>%
   group_by(transect, year_planted) %>%
   count(date)
 ```
+
 
 We can fit two pretty simple generalized linear models to this.  One is the simple intercept model, the other is modeling the abundance during each survey as a function of successional stage (measured as a factor variable).  Each model includes date as a random effect on the intercept - basically saying that there may be more or less birds on a given day). WE don't have enough observations to allow for day to modify how succession effects the count (e.g., cant' do random effect on slope). We'll first just look at the AICc-based selection table.
 
@@ -438,6 +454,7 @@ guild <- arrangeGrob(grobs = gl_guild,
                     layout_matrix = matrix(c(1,2), nrow = 1))
 
 ggsave("../figures/guild_plot.pdf", guild)
+ggsave("../figures/guild_plot.png", guild)
 ```
 
 
@@ -539,6 +556,8 @@ veg <- arrangeGrob(grobs = gl_veg,
 
 ggsave("../figures/veg_plot.pdf", veg, dpi = 600,
        width = 8, height = 8, units = c("in"))
+ggsave("../figures/veg_plot.png", veg, dpi = 600,
+       width = 8, height = 8, units = c("in"))
 ```
 
 
@@ -629,6 +648,7 @@ rich <- arrangeGrob(grobs = gl1,
                     layout_matrix = matrix(c(1,2), nrow = 1))
 
 ggsave("../figures/rich_plot.pdf", rich)
+ggsave("../figures/rich_plot.png", rich)
 ```
 
 
@@ -660,6 +680,17 @@ mat_key <-   comm_dat %>%
   spread(species, m_abund, fill=0) %>% 
   column_to_rownames(var="transect")
 ```
+#Get most common species in each habitat
+```{r}
+#TODO: make more elegant - summarize by year_planted first
+abund_top <- comm_dat %>% 
+  group_by(year_planted, species) %>%
+  summarize(tot_m_abund = mean(m_abund),
+            .groups = "keep") %>% 
+  group_by(year_planted) %>% 
+  top_n(3, wt = tot_m_abund)
+abund_top
+```
 
 ```{r}
 NMDS <- metaMDS(comm_mat,  k=2, trymax = 250, maxit = 999)
@@ -686,12 +717,15 @@ species.score$mig_code <- unlist(combineMigCats(x = species.score$mig_guild))
   scale_shape_discrete(name = "Successional Stage", 
                        labels = c("Pasture", "T-7", "T-10", "T-15", "Old"),
                        solid = T) +
-  # geom_point(data = species.score, aes(x=MDS1, y = MDS2, shape = mig_code)) +
+  # geom_point(data = species.score, aes(x=MDS1, y = MDS2)) +
   # scale_color_discrete(name = "Migratory Status", labels = c("Migrant", "Resident")) +
-  #geom_label(data = species.score, aes(x=MDS1, y = MDS2, label = species)) +
+  geom_text_repel(data = species.score, aes(x=MDS1, y = MDS2, label = species), 
+                  size = 2, direction = "both", force_pull = 1, segment.color = 'transparent',
+                  max.overlaps = 20) +
   theme_few())
 
 ggsave("../figures/nmds.pdf")
+ggsave("../figures/nmds.png")
 
 ```
 
@@ -749,7 +783,7 @@ with(key,
      points(NMDS,
             display = "sites",
             col = "black",
-            pch = pchvec[transect])
+            pch = pchvec[transect]))
 
 #Create convex hulls that highlight point clusters based on grouping dataframe
 ordihull(
