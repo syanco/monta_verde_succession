@@ -1,7 +1,7 @@
 ---
 title: "Monta Verde Succession"
 author: "Scott Yanco"
-date: "December 12, 2019"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
 output: html_document
 ---
 
@@ -9,8 +9,22 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# Introduction
-This document describes analyses and preliminary results of avian point count surveys across a successional gradient at the Monta Verde Cloud Forest in Costa Rica.
+# Introduction  
+This docuemnt contains all data processing, analysis, and visualization for Carello and Yanco (*in prep*). Data needed to execute the code herein can be found in an Open Science Framework (OSF) repository.  Data are currently private but will be made public upon manuscript acceptance.  View-only link for data: https://osf.io/65pby/?view_only=12e17f17b58343d78e15fab30acd6674
+
+This document assumes that data are stored in a directory strcuture matching the below tree; "*" denotes the directory that is set as the git repository.
+
+project
+|
++---src*
+|
++---data
+|   |
+|   +---data_by_site
+|   |
+|   +---veg_data
+|
++---figures
 
 # Required Libraries and Custom Functions
 
@@ -35,7 +49,7 @@ library(hms)
 library(lubridate)
 ```
 
-Load a custom function that will help us combine initial migratory coding into bigger bins.
+Load custom functions that will combine initial migratory and guild coding into bigger bins.
 
 ```{r}
 combineMigCats <- Vectorize(vectorize.args = "x",
@@ -73,18 +87,15 @@ First load all the point count data and combine into a single data frame.
 
 ```{r}
 #load site data
-nf4_2011 <- read.csv("../data_by_site/NF4-2011.csv", stringsAsFactors = T)
-nf1_2003 <- read.csv("../data_by_site/NF1-2003.csv", stringsAsFactors = T)
-nf2 <- read.csv("../data_by_site/NF2.csv", stringsAsFactors = T)
-mf1 <- read.csv("../data_by_site/MF1.csv", stringsAsFactors = T)
-mf2 <- read.csv("../data_by_site/MF2.csv", stringsAsFactors = T)
-nf6_2011 <- read.csv("../data_by_site/NF6-2011.csv", stringsAsFactors = T)
-p1 <- read.csv("../data_by_site/P1.csv", stringsAsFactors = T)
-p2 <- read.csv("../data_by_site/P2.csv", stringsAsFactors = T)
-nf3nf5_2008 <- read.csv("../data_by_site/NF3NF5-2008.csv", stringsAsFactors = T)
-
-#excluded Finca site from analysis
-#nf7ab_2008 <- read.csv("../data_by_site/NF7AB-2008.csv") 
+nf4_2011 <- read.csv("../data/data_by_site/NF4-2011.csv", stringsAsFactors = T)
+nf1_2003 <- read.csv("../data/data_by_site/NF1-2003.csv", stringsAsFactors = T)
+nf2 <- read.csv("../data/data_by_site/NF2.csv", stringsAsFactors = T)
+mf1 <- read.csv("../data/data_by_site/MF1.csv", stringsAsFactors = T)
+mf2 <- read.csv("../data/data_by_site/MF2.csv", stringsAsFactors = T)
+nf6_2011 <- read.csv("../data/data_by_site/NF6-2011.csv", stringsAsFactors = T)
+p1 <- read.csv("../data/data_by_site/P1.csv", stringsAsFactors = T)
+p2 <- read.csv("../data/data_by_site/P2.csv", stringsAsFactors = T)
+nf3nf5_2008 <- read.csv("../data/data_by_site/NF3NF5-2008.csv", stringsAsFactors = T)
 
 #combine into single data object
 dat <- rbind(nf4_2011, nf1_2003, nf2, mf1, mf2, nf6_2011, p1, p2, nf3nf5_2008)
@@ -93,17 +104,17 @@ dat <- rbind(nf4_2011, nf1_2003, nf2, mf1, mf2, nf6_2011, p1, p2, nf3nf5_2008)
 Load the datasheet containing key to codes.
 
 ```{r}
-codes <- read.csv("../data_by_site/CODES.csv")
+codes <- read.csv("../data/data_by_site/CODES.csv")
 ```
 
 ### Vegetation Data
 
-Load in the tree data:
+Load in the tree and shrub data:
 
 ```{r}
-trees <- read.csv("../trees_nofinca_121219.csv")
+trees <- read.csv("../data/veg_data/trees_nofinca_121219.csv")
 
-shrubs <- read.csv("../shrubs.csv")
+shrubs <- read.csv("../data/veg_data/shrubs.csv")
 shrubs$year_planted <- factor(shrubs$year_planted, levels = c("0","2011", "2008",
                                                               "2003", "old"))
 
@@ -114,7 +125,7 @@ trees$treatment <- factor(trees$treatment, levels = c("0", "2011", "2008", "2003
 Load in densiometer data (values represent open "dots"):
 
 ```{r}
-dens <- read.csv("../dens_nofinca.csv")
+dens <- read.csv("../data/veg_data/dens_nofinca.csv")
 
 #set factor order
 dens$treatment <- factor(dens$treatment, levels = c("0", "2011", "2008", "2003", "old"))
@@ -127,10 +138,8 @@ Initial basic cleaning actions:
 ```{r}
 #convert date to R date format
 dat$date <- as.Date(dat$date, format = "%d-%b-%y")
-
 dat$start_time <- as_hms(as.POSIXlt(dat$start_time, format = "%H:%M"))
 dat$obs_time <- as_hms(as.POSIXlt(dat$obs_time, format = "%H:%M"))
-
 
 #convert year planted from numeric to factor
 dat$year_planted <- as.factor(dat$year_planted) 
@@ -154,7 +163,7 @@ Subset the dataset to only include those individuals that were observed within 2
 dat_close <- dat[dat$dist == "<25",]
 ```
 
-Further subset to exclude those species whose behavior was coded as "pass through" since they were'nt truly using the habitat.
+Further subset to exclude those species whose behavior was coded as "pass through".
 
 ```{r}
 dat_close_use <- dat_close[dat_close$beh != "pt",]
@@ -168,14 +177,14 @@ dat_close_use <- dat_close_use %>%
 ```
 
 
-Now we need to join the species coding information with the database so that we have feeding guild and migratory status associated with each observation.
+Join the species coding information with the database so that feeding guild and migratory status are associated with each observation.
 
 ```{r}
 dat_join <- dat_close_use %>%
   inner_join(., codes, by = "species")
 ```
 
-Finally, we'll simplify the migratory guild data to only include 3 groups: "resident", "migratory", or "nomadic"; and simplify feeding guilds into "omnovore" or "specialist". 
+Simplify the migratory guild data to only include 3 groups: "resident", "migratory", or "nomadic"; and simplify feeding guilds into "omnovore" or "specialist". 
 
 ```{r}
 dat_join$mig_code <- unlist(combineMigCats(x = dat_join$mig_guild))
@@ -183,7 +192,9 @@ dat_join$mig_code <- unlist(combineMigCats(x = dat_join$mig_guild))
 dat_join$guild_code <- unlist(combineGuildCats(x = dat_join$feed_guild))
 ```
 
-# Analyisis
+# Analysis
+
+# TODO: CONTINUE CLEANING COMMENTS FROM HERE
 
 ## Abundance
 
