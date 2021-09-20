@@ -14,17 +14,17 @@ This docuemnt contains all data processing, analysis, and visualization for Care
 
 This document assumes that data are stored in a directory strcuture matching the below tree; "*" denotes the directory that is set as the git repository.
 
-project
-|
-+---src*
-|
-+---data
-|   |
-|   +---data_by_site
-|   |
-|   +---veg_data
-|
-+---figures
+project  
+|  
++---src*  
+|  
++---data  
+|   |  
+|   +---data_by_site  
+|   |  
+|   +---veg_data  
+|  
++---figures  
 
 # Required Libraries and Custom Functions
 
@@ -194,13 +194,10 @@ dat_join$guild_code <- unlist(combineGuildCats(x = dat_join$feed_guild))
 
 # Analysis
 
-# TODO: CONTINUE CLEANING COMMENTS FROM HERE
 
 ## Abundance
 
-Now we're ready for some anlyeses.  Let's first build some really basic models and plots to see if there is an effect of treatment on the total number of birds seen (having excluded pass throughs, and those observed >25m from the observer).
-
-This next code chunk counts up the number of observations grouped by transect and date (so for each transect-day, we get the total number of birds)
+Counts the number of observations grouped by transect and date (so for each transect-day, we get the total number of birds)
 
 ```{r}
 mod1_counts <- dat_join %>%
@@ -209,31 +206,20 @@ mod1_counts <- dat_join %>%
 ```
 
 
-We can fit two pretty simple generalized linear models to this.  One is the simple intercept model, the other is modeling the abundance during each survey as a function of successional stage (measured as a factor variable).  Each model includes date as a random effect on the intercept - basically saying that there may be more or less birds on a given day). WE don't have enough observations to allow for day to modify how succession effects the count (e.g., cant' do random effect on slope). We'll first just look at the AICc-based selection table.
+Fit two generalized linear models to this:  
+1) Intercept-only model;  
+2) Abundance during each survey as a function of successional stage (measured as a factor variable).  
+
+Each model includes date as a random effect on the intercept. 
 
 ```{r}
-# f0 <- lmer(n ~ 0 + (1|date), data = mod1_counts, REML = F)
-# #succession effect model
-# f1 <- lmer(n ~ 0 + year_planted + (1 |date), data = mod1_counts, REML = F)
-
 #intercept ("dot") model
 f0 <- glmer(n ~ 0 + (1|date), data = mod1_counts, family = "poisson")
 #succession effect model
-f1 <- glmer(n ~ 0 + year_planted + (1 |date), data = mod1_counts, , family = "poisson")
+f1 <- glmer(n ~ 0 + year_planted + (1 |date), data = mod1_counts, family = "poisson")
 
 aictab(list("dot" = f0, "succession" = f1))
-
 ```
-
-Clear information theoretic support for the succession model.  Let's now evaluate the model. By looking at the summary and a residuals plot. First though we need to refit the models using REML instead of ML.  ML is needed to use AICc but produces biased coefficient estimates.
-
-```{r}
-#intercept ("dot") model
-f0 <- glmer(n ~ 1 + (1|date), data = mod1_counts, family = "poisson")
-#succession effect model
-f1 <- glmer(n ~ 1 + year_planted + (1 |date), data = mod1_counts, family = "poisson")
-```
-
 
 ```{r}
 summary(f1)
@@ -247,10 +233,6 @@ qqline(resid(f1))
 
 
 ```
-
-The residuals don't look great, but not horrible either - need to think more about what might be going on, but there seems like there might be some structure where we see residual bias at the highest predicted values. It might also be because we're technically using a model that assumes normality of residuals with count data which we could also model as a Poisson.  That said, think about Gary White's talk at RRF and his paper that showed sometimes the normal model is actually more robust than the Poisson even for known-Poisson-generated data.  I think the residuals look OK enough to keep going.
-
-The actual fixed effect coefficient estimates are also a bit confusing in their trend, but at least they are larger than their standard error (except for old) - let's make some plots to look at these graphically.
 
 Make a version forced through intercept for graphing
 ```{r}
@@ -282,7 +264,7 @@ f1_pred <- ggpredict(f1, terms = c("year_planted"))
 ggsave("../figures/abund_plot.pdf")
 ```
 
-The above plot shows the raw count data (in the blue points) colored by date. The black squares represent the model estimate for each succession class (think of this as the mean corrected for day effects).  The error bars ar 95% CIs.  Hard to see a trend I'd be confident in here, other than maybe a boost in abundance at the earliest successional stage.  I think the model is overfit, so the parameter estimates themselves are difficult to have much confidence in (the model, in the end, includes 7 parameters for ~65 observations, that's not great...  I trust the graph more.)
+The above plot shows the raw count data (in the blue points) colored by date. The black squares represent the model estimate for each succession class (think of this as the mean corrected for day effects).  The error bars ar 95% CIs. 
 
 ## Migratory status
 
@@ -693,7 +675,6 @@ mat_key <-   comm_dat %>%
 ```
 #Get most common species in each habitat
 ```{r}
-#TODO: make more elegant - summarize by year_planted first
 abund_top <- comm_dat %>% 
   group_by(year_planted, species) %>%
   summarize(tot_m_abund = mean(m_abund),
@@ -739,116 +720,3 @@ ggsave("../figures/nmds.pdf")
 ggsave("../figures/nmds.png")
 
 ```
-
-### Do it again but use each transect
-
-```{r}
-comm_dat <- dat_join %>% 
-  group_by(year_planted, transect, date, start_time, species) %>% 
-  count() %>% 
-  ungroup()
-
-comm_mat <- comm_dat %>% 
-  spread(species, n, fill=0) %>% 
-  select(-c(year_planted, transect, date, start_time)) %>% 
-  as.matrix
-
-mat_key <- comm_dat %>% 
-  spread(species, n, fill=0)
-```
-
-```{r}
-
-#NOT CONVERGING
-NMDS <- metaMDS(comm_mat,  k=2, trymax = 250, maxit = 999)
-```
-
-Plots
-
-```{r}
-#extract NMDS scores (x and y coordinates)
-data.scores <- as.data.frame(scores(NMDS))
-data.scores$year_planted <- mat_key$year_planted
-
-species.score <- as.data.frame(NMDS$species) %>% 
-  rownames_to_column(var = "species") %>% 
-  left_join(codes, by = "species") %>% 
-  select(species, MDS1, MDS2, mig_guild)
-
-species.score$mig_code <- unlist(combineMigCats(x = species.score$mig_guild))  
-
-ggplot() +
-  geom_point(data = data.scores, aes(x = NMDS1, y = NMDS2, group = year_planted,
-                                     shape = year_planted), 
-               color = "black", size = 5) +
-  geom_point(data = species.score, aes(x=MDS1, y = MDS2, color = mig_code)) +
-  theme_minimal()
-
-```
-```{r}
-colvec <- c("gray0", "gray0", "gray49", "gray49")   # Identifies colors for group assignments
-pchvec <- c(21, 22, 23, 24, 35)   # Identifies character symbols for group assignments
-
-plot(NMDS)
-with(key,
-     points(NMDS,
-            display = "sites",
-            col = "black",
-            pch = pchvec[transect]))
-
-#Create convex hulls that highlight point clusters based on grouping dataframe
-ordihull(
-  NMDS,
-  key$transect,
-  display = "sites",
-  draw = c("polygon"),
-  col = NULL,
-  border = c("gray0", "gray0", "gray48", "gray48"),
-  lty = c(1, 2, 1, 2),
-  lwd = 2.5
-  )
-
-# # Calculating centroids 
-# 
-# # You can calculate centroids for your groups which can be viewed as the average position of observations in ordination space. 
-# 
-# # Calculating and plotting centroids of NMDS Result
-# scrs <-
-#   scores(island.spp_NMS, display = "sites", "species")
-# cent <-
-#   aggregate(scrs ~ habitat, data = island.spp_groups, FUN = "mean")
-# names(cent) [-1] <- colnames(scrs)
-# points(cent [,-1],
-#        pch = c( 8 , 8 , 8, 8),
-#        col = c("gray0", "gray0", "gray48", "gray48"),
-#        bg = c("black"),
-#        lwd = 3.0,
-#        cex = 2.0 # Plots centroids as points on ordination
-#        )
-
-```
-
-
-# Preliminary Conclusions
-
-This is a work in progress, but here's what I'm thinking for now.  There's a bump in both abundance and proportion of migrants in the 2011 treatment.  We'll need to appropriately caveat because, with the small sample size, one or a few days could be driving this (though I think the panel plot helps make the case it's a real trend).  That said, there could be a story here.  We wouldn't necessarily expect the most migrants in pasture because that's actually a totally different habitat type.  So you would expect the most migrants in the earliest successional stages, which is exactly what we see.  What's surprising, is that the trend appears to be nonlinear - it really only holds for the earliest successional habitats and after that, there is no discernable difference when compared to uncut forest. 
-
-The tree height plot helps us disentangle that a bit more - the distribution of tree heights is really different in the 2011 plot compared to the other successional stages or the mature forest.
-
-Here's another way of looking at it - we fit a separate loess smoother over the counts by date grouped by treatment and mig code.  It makes the influx of migrants late winter into early spring more obvious than when looking at the raw data.  This smoother doesn't show what our model did exactly (we don't have enough data to model this exactly, but it at least makes it visible to us).
-
-```{r}
-ggplot(mig_counts, aes(x = date, y = n, group = mig_code, 
-                color = mig_code)) +
-  # geom_line(data = cbind(mig_counts[!is.na(mig_counts$date),], 
-  #                        pred = predict(f3)), aes(y = pred), 
-            # size = 1) +  # adding predicted line from mixed model 
-  geom_smooth(method = "loess") +
-  ylim(c(0,20)) +
-  facet_wrap(~year_planted)
-```
-
-# Notes
-- Diversity index
-- Check journals:  Biologia Tropical; Journal of Tropical Ecology; JFO; Agirculture, Ecosystems & Environment; Biotropica
-
