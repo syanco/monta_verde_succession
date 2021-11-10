@@ -47,33 +47,39 @@ library(gridExtra)
 library(ggrepel)
 library(hms)
 library(lubridate)
+library(wesanderson)
 ```
 
 Load custom functions that will combine initial migratory and guild coding into bigger bins.
 
 ```{r}
 combineMigCats <- Vectorize(vectorize.args = "x",
-                               FUN = function(x) {
-                                 switch(as.character(x), 
-                            "altitudinal" = "mig",
-                            "long-distance" = "mig",
-                            "short-distance" = "mig",
-                            "nomadic" = "mig",
-                            "resident" = "res",
-                            "NA" = NA)})
+                            FUN = function(x) {
+                              switch(as.character(x), 
+                                     "altitudinal" = "mig",
+                                     "long-distance" = "mig",
+                                     "short-distance" = "mig",
+                                     "nomadic" = "mig",
+                                     "resident" = "res",
+                                     "NA" = NA)})
 
 combineGuildCats <- Vectorize(vectorize.args = "x",
-                               FUN = function(x) {
-                                 switch(as.character(x), 
-                            "carnivore" = "specialist",
-                            "frugivore" = "specialist",
-                            "granivore" = "specialist",
-                            "herbivore" = "specialist",
-                            "insectivore" = "specialist",
-                            "nectarivore" = "specialist",
-                            "nectarivore (omnivore?)" = "omnivore",
-                            "omnivore" = "omnivore",
-                            "scavenger" = "omnivore")})
+                              FUN = function(x) {
+                                switch(as.character(x), 
+                                       "carnivore" = "specialist",
+                                       "frugivore" = "specialist",
+                                       "granivore" = "specialist",
+                                       "herbivore" = "specialist",
+                                       "insectivore" = "specialist",
+                                       "nectarivore" = "specialist",
+                                       "nectarivore (omnivore?)" = "omnivore",
+                                       "omnivore" = "omnivore",
+                                       "scavenger" = "omnivore")})
+```
+
+Make color palette for project
+```{r}
+pal <- wes_palette("Darjeeling1", 5)
 ```
 
 
@@ -194,8 +200,6 @@ dat_join$guild_code <- unlist(combineGuildCats(x = dat_join$feed_guild))
 
 # Analysis
 
-# TODO: CONTINUE CLEANING COMMENTS FROM HERE
-
 ## Abundance
 
 Now we're ready for some anlyeses.  Let's first build some really basic models and plots to see if there is an effect of treatment on the total number of birds seen (having excluded pass throughs, and those observed >25m from the observer).
@@ -270,15 +274,20 @@ f1est <- data.frame(coef = f1.0.coef, ci.low = f1.0.ci[2:6,1], ci.hi = f1.0.ci[2
 f1_pred <- ggpredict(f1, terms = c("year_planted"))
 
 (abund_plot <- ggplot() +
-  geom_point(data = f1est, aes(x = year_planted, y = coef), alpha = .6) +
-  geom_errorbar(data = f1est, 
-                aes(x = year_planted, ymax = ci.hi, ymin = ci.low),
-                width = .2) +
-  scale_x_discrete(labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
-  ylab(expression(paste("Abundance birds count "^-1))) +
-  xlab("Successional Stage") +
-  theme_few())
+    geom_point(data = f1est, aes(x = year_planted, y = coef, color = year_planted), alpha = .6) +
+    geom_errorbar(data = f1est, 
+                  aes(x = year_planted, ymax = ci.hi, ymin = ci.low, color = year_planted),
+                  width = .2) +
+    scale_color_manual(values = pal,
+                       name = "Successional Stage", 
+                       labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+    scale_x_discrete(labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+    ylab(expression(paste("Observations transect "^-1))) +
+    xlab("Successional Stage") +
+    theme_few() +
+    theme(legend.position = "none"))
 
+ggsave("../figures/abund_plot.png")
 ggsave("../figures/abund_plot.pdf")
 ```
 
@@ -310,7 +319,7 @@ mig_beta <- dat_join %>%
   group_by(year_planted, transect, date, start_time) %>% 
   summarise(mig = sum(mig_code == "mig"), res = sum(mig_code == "res")) %>% 
   mutate(prop = mig/(mig+res), trials = (mig+res)) 
-  
+
 # ggplot() +
 #   geom_bar(data = mig_prop, aes(x=year_planted, y = m_count, fill = mig_code), 
 #            position = "fill", stat = "identity") +
@@ -330,7 +339,7 @@ First a couple plots by date separated by mig code and succession treatment:
 ```{r}
 ggplot(mig_counts) +
   geom_point(aes(x = date, y = n, group = mig_code, 
-                color = mig_code)) +
+                 color = mig_code)) +
   facet_wrap(~year_planted)
 
 ggplot(mig_beta) +
@@ -343,11 +352,11 @@ ggplot(mig_beta) +
 mean.fun <- function(dat, idx) mean(dat[idx], na.rm = TRUE)
 
 boot.prop <- sapply(unique(mig_beta$year_planted), FUN = function(x){
- out <- boot(mig_beta$prop[mig_beta$year_planted == x], mean.fun, R=10000, 
+  out <- boot(mig_beta$prop[mig_beta$year_planted == x], mean.fun, R=10000, 
               sim = "ordinary")
-  }, simplify = F)
+}, simplify = F)
 
-            
+
 cis <- sapply(boot.prop, FUN = function(x){boot.ci(boot.out = x, type="bca")},
               simplify = F)
 unique(mig_beta$year_planted)
@@ -357,17 +366,23 @@ mig.df <- data.frame(year_planted = unique(mig_beta$year_planted),
                      mean = sapply(cis, function(x){x$t0}),
                      ci.low = sapply(cis, function(x){x$bca[4]}),
                      ci.hi = sapply(cis, function(x){x$bca[5]}))
+mig.df
 ```
- Plot:
+Plot:
 ```{r fig.width=4, fig.height=4}
 (mig_plot <- ggplot(mig.df) +
-  geom_point(aes(x=year_planted, y = mean)) +
-  geom_errorbar(aes(x=year_planted, ymin = ci.low, ymax = ci.hi), width =.1) +
-  scale_x_discrete(labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
-  ylab(expression(paste("Proportion migrants point count "^-1))) +
-  xlab("Successional Stage") +
+   geom_point(aes(x=year_planted, y = mean, color = year_planted)) +
+   geom_errorbar(aes(x=year_planted, ymin = ci.low, ymax = ci.hi, color = year_planted), width =.1) +
+   scale_color_manual(values = pal,
+                      name = "Successional Stage", 
+                      labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+   scale_x_discrete(labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+   ylab(expression(paste("Proportion migrants transect "^-1))) +
+   xlab("Successional Stage") +
    ylim(0,1)+
-  theme_few())
+   ggtitle("A") +
+   theme_few() +
+   theme(legend.position = "none"))
 
 # ggplot(mig.df) +
 #   geom_bar(aes(x = year_planted, y = mean, fill = mig_code), 
@@ -416,7 +431,7 @@ ggplot(guild_prop) +
 ```{r}
 ggplot(guild_counts) +
   geom_point(aes(x = date, y = n, group = guild_code, 
-                color = guild_code)) +
+                 color = guild_code)) +
   facet_wrap(~year_planted)
 
 ggplot(guild_beta) +
@@ -428,31 +443,37 @@ ggplot(guild_beta) +
 mean.fun <- function(dat, idx) mean(dat[idx], na.rm = TRUE)
 
 boot.prop <- sapply(unique(guild_beta$year_planted), FUN = function(x){
- out <- boot(guild_beta$prop[guild_beta$year_planted == x], mean.fun, R=10000, 
+  out <- boot(guild_beta$prop[guild_beta$year_planted == x], mean.fun, R=10000, 
               sim = "ordinary")
-  }, simplify = F)
+}, simplify = F)
 
-            
+
 cis.guild <- sapply(boot.prop, FUN = function(x){boot.ci(boot.out = x, type="bca")},
-              simplify = F)
+                    simplify = F)
 unique(guild_beta$year_planted)
 cis.guild
 
 guild.df <- data.frame(year_planted = unique(guild_beta$year_planted),
-                     mean = sapply(cis.guild, function(x){x$t0}),
-                     ci.low = sapply(cis.guild, function(x){x$bca[4]}),
-                     ci.hi = sapply(cis.guild, function(x){x$bca[5]}))
+                       mean = sapply(cis.guild, function(x){x$t0}),
+                       ci.low = sapply(cis.guild, function(x){x$bca[4]}),
+                       ci.hi = sapply(cis.guild, function(x){x$bca[5]}))
+guild.df
 ```
- Plot:
+Plot:
 ```{r fig.height=4, fig.width=4}
 (spec_plot <- ggplot(guild.df) +
-  geom_point(aes(x=year_planted, y = mean)) +
-  geom_errorbar(aes(x=year_planted, ymin = ci.low, ymax = ci.hi), width =.1) +
-  scale_x_discrete(labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
-  ylab(expression(paste("Proportion specialists point count "^-1))) +
-  xlab("Successional Stage") +
-  ylim(0,1) +
-  theme_few())
+   geom_point(aes(x=year_planted, y = mean, color = year_planted)) +
+   geom_errorbar(aes(x=year_planted, ymin = ci.low, ymax = ci.hi, color = year_planted), width =.1) +
+   scale_color_manual(values = pal,
+                      name = "Successional Stage", 
+                      labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+   scale_x_discrete(labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+   ylab(expression(paste("Proportion specialists transect "^-1))) +
+   xlab("Successional Stage") +
+   ggtitle("B")+
+   ylim(0,1) +
+   theme_few()+
+   theme(legend.position = "none"))
 ```
 Combine the plots for mig and foraging guild
 
@@ -460,9 +481,9 @@ Combine the plots for mig and foraging guild
 gl_guild <- list(mig_plot, spec_plot)
 
 guild <- arrangeGrob(grobs = gl_guild,
-                    heights = c(4),
-                    widths = c(4,4),
-                    layout_matrix = matrix(c(1,2), nrow = 1))
+                     heights = c(4),
+                     widths = c(4,4),
+                     layout_matrix = matrix(c(1,2), nrow = 1))
 
 ggsave("../figures/guild_plot.pdf", guild)
 ggsave("../figures/guild_plot.png", guild)
@@ -486,17 +507,27 @@ trees %>%
 Let's look at the distribution of tree heights by treatement.
 
 ```{r fig.height=4, fig.width=4}
+trees$treatment <- factor(trees$treatment, 
+                             levels = c("0", "2011", "2008", "2003", "old"))
 (tr_ht <- ggplot() +
-  geom_violin(data = trees, aes(x=treatment, y = ht), fill = "gray") +
-  geom_point(data = trees[trees$treatment == 0,], aes(x = treatment, y = ht),
-             size = 3) +
-  #scale_fill_grey(start = .9, end = 0) +
-  scale_x_discrete(labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
-  theme_minimal() +
-  ylab("Tree Ht. (cm)") +
-  xlab("Treatment") + 
+   geom_violin(data = trees,
+               # [trees$treatment != 0,], 
+               aes(x=treatment, y = ht, fill = treatment)) +
+   geom_point(data = trees[trees$treatment == 0,], aes(x = treatment, y = ht),
+              size = 3, color = pal[1]) +
+   scale_fill_manual(values = pal,
+                     name = "Successional Stage",
+                     labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+   scale_x_discrete(name = "Successional Stage",
+                    labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+   #scale_fill_grey(start = .9, end = 0) +
+   # scale_x_discrete(labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+   ggtitle("A")+
+   theme_minimal() +
+   ylab("Tree Ht. (cm)") +
+   xlab("Treatment") + 
    theme_few() +
-  theme(legend.position = "none"))
+   theme(legend.position = "none"))
 ```
 
 That's pretty interesting, again, the only real standout is the 2011 treatment - 2003 and 2008 look more similar to old than 2011 - just missing the far end of the tail.
@@ -505,15 +536,23 @@ We can do the same thig with DBH data too :
 
 ```{r fig.height=4, fig.width=4}
 (tr_dbh <- ggplot() +
-  geom_violin(data = trees, aes(x=treatment, y = dbh), fill = "gray") +
-  geom_point(data = trees[trees$treatment == 0,], aes(x = treatment, y = dbh),
-             size = 3) +
-  theme_minimal() +
-  ylab("Tree DBH (cm)") +
-  scale_x_discrete(labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
-  xlab("Treatment") + 
-  theme_few() +
-  theme(legend.position = "none"))
+   geom_violin(data = trees,
+               # [trees$treatment != 0,], 
+               aes(x=treatment, y = dbh, fill = treatment),
+               scale = "count") +
+   geom_point(data = trees[trees$treatment == 0,], aes(x = treatment, y = dbh),
+              size = 3, color = pal[1]) +
+   theme_minimal() +
+   ylab("Tree DBH (cm)") +
+   scale_fill_manual(values = pal,
+                     name = "Successional Stage", 
+                     labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+   scale_x_discrete(name = "Successional Stage", 
+                    labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+   xlab("Treatment") + 
+   ggtitle("B")+
+   theme_few() +
+   theme(legend.position = "none"))
 ```
 
 Pretty cool looking graph but I think 2011 doesn't jump out to me the way it does for tree height.
@@ -526,16 +565,21 @@ trt_lab <-  c("Pasture", "T-7", "T-10", "T-15", "Old")
 names(trt_lab) <- levels(dens$treatment)
 
 (can_op <- ggplot() +
-  geom_jitter(data = dens, aes(x = treatment, y = dens_mean), 
-              size = 3, width = 0.3, height= 0) +
-  scale_x_discrete(labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
-  ylab("Canopy Openness (%)") +
-  xlab("Treatment") + 
-  theme_few() +
-  theme(legend.position = "none", axis.text.x = element_blank(), 
-        axis.ticks.x = element_blank()) +
-  facet_grid(~treatment, scales = "free_x", labeller = 
-               labeller(treatment = trt_lab)))
+    geom_jitter(data = dens, aes(x = treatment, y = dens_mean, color = treatment), 
+                size = 3, width = 0.3, height= 0) +
+    scale_color_manual(values = pal,
+                       name = "Successional Stage", 
+                       labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+    scale_x_discrete(name = "Successional Stage", 
+                     labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+    ylab("Canopy Openness (%)") +
+    xlab("Treatment") + 
+    ggtitle("C") +
+    theme_few() +
+    theme(legend.position = "none", axis.text.x = element_blank(), 
+          axis.ticks.x = element_blank()) +
+    facet_grid(~treatment, scales = "free_x", labeller = 
+                 labeller(treatment = trt_lab)))
 ```
 
 ```{r fig.height=4, fig.width=4}
@@ -543,15 +587,21 @@ trt_lab <-  c("Pasture", "T-7", "T-10", "T-15", "Old")
 names(trt_lab) <- levels(shrubs$year_planted)
 
 (shrub_den <- ggplot() +
-  geom_jitter(data = shrubs, aes(x = year_planted, y = shrubs), 
-              width = .2, height = 0, size = 3) +
-  ylab("Shrub Density Score") +
-  xlab("Treatment") + 
-  theme_few() +
+    geom_jitter(data = shrubs, aes(x = year_planted, y = shrubs, color = year_planted), 
+                width = .2, height = 0, size = 3) +
+    scale_color_manual(values = pal,
+                       name = "Successional Stage", 
+                       labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+    scale_x_discrete(name = "Successional Stage", 
+                     labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+    ylab("Shrub Density Score") +
+    xlab("Treatment") + 
+    ggtitle("D")+
+    theme_few() +
     theme(legend.position = "none", axis.text.x = element_blank(), 
-        axis.ticks.x = element_blank())   +
-   facet_grid(~year_planted, scales = "free_x", 
-              labeller = labeller(year_planted = trt_lab)))
+          axis.ticks.x = element_blank())   +
+    facet_grid(~year_planted, scales = "free_x", 
+               labeller = labeller(year_planted = trt_lab)))
 ```
 
 ### Combine veg plots
@@ -560,10 +610,10 @@ names(trt_lab) <- levels(shrubs$year_planted)
 gl_veg <- list(tr_ht, tr_dbh, can_op, shrub_den)
 
 veg <- arrangeGrob(grobs = gl_veg,
-                    heights = c(4,4),
-                    widths = c(4,4),
-                    layout_matrix = matrix(rbind(c(1,2),
-                                           c(3,4)), nrow = 2))
+                   heights = c(4,4),
+                   widths = c(4,4),
+                   layout_matrix = matrix(rbind(c(1,2),
+                                                c(3,4)), nrow = 2))
 
 ggsave("../figures/veg_plot.pdf", veg, dpi = 600,
        width = 8, height = 8, units = c("in"))
@@ -595,7 +645,9 @@ rich <- ocurr_sites %>%
 
 rich %>% 
   group_by(year_planted) %>% 
-  summarise(mean(n))
+  summarise(mean(n),
+            max(n),
+            min(n))
 
 rich.visit <- ocurr_sites %>% 
   group_by(year_planted, transect, date, start_time) %>%
@@ -603,11 +655,16 @@ rich.visit <- ocurr_sites %>%
   summarise(sp_count = sum(pres))
 
 (total_rich_plot <- ggplot(rich) +
-  geom_point(aes(x = year_planted, y = n), size = 3) +
-  xlab("Successional Stage") +
-  ylab("Total Species Richness") +
-  scale_x_discrete(labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
-    theme_few())
+    geom_point(aes(x = year_planted, y = n, color = year_planted), size = 3) +
+    xlab("Successional Stage") +
+    ylab("Total Species Richness") +
+    scale_color_manual(values = pal,
+                       name = "Successional Stage", 
+                       labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+    scale_x_discrete(labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+    ggtitle("A")+
+    theme_few() +
+    theme(legend.position = "none"))
 
 ggplot(rich.visit) +
   geom_point(aes(x = date, y = sp_count, color = transect)) +
@@ -622,30 +679,36 @@ ggplot(rich.visit) +
 mean.fun <- function(dat, idx) mean(dat[idx], na.rm = TRUE)
 
 boot.sp <- sapply(unique(rich.visit$year_planted), FUN = function(x){
- out <- boot(rich.visit$sp_count[rich.visit$year_planted == x], mean.fun, 
-             R=10000, sim = "ordinary")
-  }, simplify = F)
+  out <- boot(rich.visit$sp_count[rich.visit$year_planted == x], mean.fun, 
+              R=10000, sim = "ordinary")
+}, simplify = F)
 
-            
+
 cis.sp <- sapply(boot.sp, FUN = function(x){boot.ci(boot.out = x, type="bca")},
-              simplify = F)
+                 simplify = F)
 unique(rich.visit$year_planted)
 cis.sp
 
 rich.df <- data.frame(year_planted = unique(rich.visit$year_planted),
-                     mean = sapply(cis.sp, function(x){x$t0}),
-                     ci.low = sapply(cis.sp, function(x){x$bca[4]}),
-                     ci.hi = sapply(cis.sp, function(x){x$bca[5]}))
+                      mean = sapply(cis.sp, function(x){x$t0}),
+                      ci.low = sapply(cis.sp, function(x){x$bca[4]}),
+                      ci.hi = sapply(cis.sp, function(x){x$bca[5]}))
+rich.df
 ```
- Plot:
+Plot:
 ```{r fig.height=4, fig.width=4}
 (per_rich_plot <- ggplot(rich.df) +
-  geom_point(aes(x=year_planted, y = mean)) +
-  geom_errorbar(aes(x=year_planted, ymin = ci.low, ymax = ci.hi), width =.1) +
-  ylab(expression(paste("Species Richness Point Count "^-1))) +
-  xlab("Successional Stage") +
-      scale_x_discrete(labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
-  theme_few())
+   geom_point(aes(x=year_planted, y = mean, color = year_planted)) +
+   geom_errorbar(aes(x=year_planted, ymin = ci.low, ymax = ci.hi, color = year_planted), width =.1) +
+   ylab(expression(paste("Species Richness Transect "^-1))) +
+   xlab("Successional Stage") +
+   scale_color_manual(values = pal,
+                      name = "Successional Stage", 
+                      labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+   scale_x_discrete(labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+   ggtitle("B")+
+   theme_few() +
+   theme(legend.position = "none"))
 ```
 
 Plot them together:
@@ -704,7 +767,7 @@ abund_top
 ```
 
 ```{r}
-NMDS <- metaMDS(comm_mat,  k=2, trymax = 250, maxit = 999)
+NMDS <- metaMDS(comm_mat,  k=2, trymax = 250, maxit = 999, autotransform = F)
 ```
 
 Plots
@@ -714,30 +777,59 @@ Plots
 data.scores <- as.data.frame(scores(NMDS))
 data.scores$year_planted <- mat_key$year_planted
 
-species.score <- as.data.frame(NMDS$species) %>% 
-  rownames_to_column(var = "species") %>% 
-  left_join(codes, by = "species") %>% 
-  select(species, MDS1, MDS2, mig_guild)
 
-species.score$mig_code <- unlist(combineMigCats(x = species.score$mig_guild))  
 
 (nmds <- ggplot() +
-  geom_point(data = data.scores, aes(x = NMDS1, y = NMDS2, group = year_planted,
-                                     shape = year_planted), 
-               color = "black", fill = "black", size = 5) +
-  scale_shape_discrete(name = "Successional Stage", 
-                       labels = c("Pasture", "T-7", "T-10", "T-15", "Old"),
-                       solid = T) +
-  # geom_point(data = species.score, aes(x=MDS1, y = MDS2)) +
-  # scale_color_discrete(name = "Migratory Status", labels = c("Migrant", "Resident")) +
-  geom_text_repel(data = species.score, aes(x=MDS1, y = MDS2, label = species), 
-                  size = 2, direction = "both", force_pull = 1, segment.color = 'transparent',
-                  max.overlaps = 20) +
-  theme_few())
+    geom_point(data = data.scores, aes(x = NMDS1, y = NMDS2, 
+                                       shape = year_planted, color = year_planted), 
+               size = 5) +
+    scale_color_manual(values = pal,
+                       name = "Successional Stage", 
+                       labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+    scale_shape_discrete(name = "Successional Stage",
+                         labels = c("Pasture", "T-7", "T-10", "T-15", "Old"),
+                         solid = T) +
+    
+    # geom_point(data = species.score, aes(x=MDS1, y = MDS2)) +
+    # scale_color_discrete(name = "Migratory Status", labels = c("Migrant", "Resident")) +
+    # geom_text_repel(data = species.score, aes(x=MDS1, y = MDS2, label = species), 
+    #                 size = 2, direction = "both", force_pull = 1, segment.color = 'transparent',
+    #                 max.overlaps = 20) +
+    theme_few())
 
 ggsave("../figures/nmds.pdf")
 ggsave("../figures/nmds.png")
 
+```
+SI version with species codes
+```{r}
+species.score <- as.data.frame(NMDS$species) %>%
+  rownames_to_column(var = "species") %>%
+  left_join(codes, by = "species") %>%
+  select(species, MDS1, MDS2, mig_guild)
+
+species.score$mig_code <- unlist(combineMigCats(x = species.score$mig_guild))
+
+(nmds2 <- ggplot() +
+    geom_point(data = data.scores, aes(x = NMDS1, y = NMDS2, 
+                                       shape = year_planted, color = year_planted), 
+               size = 5) +
+    scale_color_manual(values = pal,
+                       name = "Successional Stage", 
+                       labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+    scale_shape_discrete(name = "Successional Stage",
+                         labels = c("Pasture", "T-7", "T-10", "T-15", "Old"),
+                         solid = T) +
+    
+    # geom_point(data = species.score, aes(x=MDS1, y = MDS2)) +
+    # scale_color_discrete(name = "Migratory Status", labels = c("Migrant", "Resident")) +
+    geom_text_repel(data = species.score, aes(x=MDS1, y = MDS2, label = species),
+                    size = 2, direction = "both", force_pull = 1, segment.color = 'transparent',
+                    max.overlaps = 40) +
+    theme_few())
+
+ggsave("../figures/nmds_supp.pdf")
+ggsave("../figures/nmds_supp.png")
 ```
 
 ### Do it again but use each transect
@@ -780,7 +872,7 @@ species.score$mig_code <- unlist(combineMigCats(x = species.score$mig_guild))
 ggplot() +
   geom_point(data = data.scores, aes(x = NMDS1, y = NMDS2, group = year_planted,
                                      shape = year_planted), 
-               color = "black", size = 5) +
+             color = "black", size = 5) +
   geom_point(data = species.score, aes(x=MDS1, y = MDS2, color = mig_code)) +
   theme_minimal()
 
@@ -806,7 +898,7 @@ ordihull(
   border = c("gray0", "gray0", "gray48", "gray48"),
   lty = c(1, 2, 1, 2),
   lwd = 2.5
-  )
+)
 
 # # Calculating centroids 
 # 
@@ -839,10 +931,10 @@ Here's another way of looking at it - we fit a separate loess smoother over the 
 
 ```{r}
 ggplot(mig_counts, aes(x = date, y = n, group = mig_code, 
-                color = mig_code)) +
+                       color = mig_code)) +
   # geom_line(data = cbind(mig_counts[!is.na(mig_counts$date),], 
   #                        pred = predict(f3)), aes(y = pred), 
-            # size = 1) +  # adding predicted line from mixed model 
+  # size = 1) +  # adding predicted line from mixed model 
   geom_smooth(method = "loess") +
   ylim(c(0,20)) +
   facet_wrap(~year_planted)
