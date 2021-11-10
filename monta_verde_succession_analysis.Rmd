@@ -792,13 +792,13 @@ data.scores$year_planted <- mat_key$year_planted
     
     # geom_point(data = species.score, aes(x=MDS1, y = MDS2)) +
     # scale_color_discrete(name = "Migratory Status", labels = c("Migrant", "Resident")) +
-    # geom_text_repel(data = species.score, aes(x=MDS1, y = MDS2, label = species), 
-    #                 size = 2, direction = "both", force_pull = 1, segment.color = 'transparent',
-    #                 max.overlaps = 20) +
+    geom_text_repel(data = species.score, aes(x=MDS1, y = MDS2, label = species),
+      C              size = 2, direction = "both", force_pull = 1, segment.olor = 'transparent',
+                    max.overlaps = 40) +
     theme_few())
 
-ggsave("../figures/nmds.pdf")
-ggsave("../figures/nmds.png")
+ggsave("../figures/nmds_supp.pdf")
+ggsave("../figures/nmds_supp.png")
 
 ```
 SI version with species codes
