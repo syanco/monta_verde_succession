@@ -48,6 +48,11 @@ library(ggrepel)
 library(hms)
 library(lubridate)
 library(wesanderson)
+library(patchwork)
+library(extrafont)
+
+# font_import() #run once
+loadfonts()
 ```
 
 Load custom functions that will combine initial migratory and guild coding into bigger bins.
@@ -80,6 +85,9 @@ combineGuildCats <- Vectorize(vectorize.args = "x",
 Make color palette for project
 ```{r}
 pal <- wes_palette("Darjeeling1", 5)
+pal[3] <- "#000000"
+pal[5] <- "#3498b3"
+pal <- c(pal)
 ```
 
 
@@ -105,7 +113,27 @@ nf3nf5_2008 <- read.csv("../data/data_by_site/NF3NF5-2008.csv", stringsAsFactors
 
 #combine into single data object
 dat <- rbind(nf4_2011, nf1_2003, nf2, mf1, mf2, nf6_2011, p1, p2, nf3nf5_2008)
+
 ```
+
+Combine the two T-10 component transects    
+```{r}
+dat <- dat %>% 
+  mutate(transect = recode(transect,
+                           "NF4-NACI"="NF4-NACI",
+                           "NF1-LC"="NF1-LC",
+                           "(LC) NF2-T"="(LC) NF2-T",
+                           "MF1-LC"="MF1-LC",
+                           "MF2-LC"="MF2-LC",
+                           "NF6-NACI"="NF6-NACI",
+                           "P1"="P1",
+                           "P1 (N)"="P1",
+                           "P1(N)"="P1",
+                           "P2"="P2",
+                           "NF3-NACI" = "NF35-NACI",
+                           "NF5-NACI" = "NF35-NACI"))
+```
+
 
 Load the datasheet containing key to codes.
 
@@ -157,8 +185,8 @@ dat$year_planted[is.na(dat$year_planted)] <- "2003"
 levels(dat$year_planted) <- c("0", "2011", "2008", "2003", "old")
 
 #fix weird transect coding
-dat$transect[dat$transect == "P1(N)"] <- "P1"
-dat$transect[dat$transect == "P1 (N)"] <- "P1"
+# dat$transect[dat$transect == "P1(N)"] <- "P1"
+# dat$transect[dat$transect == "P1 (N)"] <- "P1"
 dat$transect <- droplevels(dat$transect)
 levels(dat$transect) 
 ```
@@ -173,13 +201,6 @@ Further subset to exclude those species whose behavior was coded as "pass throug
 
 ```{r}
 dat_close_use <- dat_close[dat_close$beh != "pt",]
-```
-
-Subset to first 15 minutes only
-
-```{r}
-dat_close_use <- dat_close_use %>% 
-  filter(abs(start_time-obs_time) <= 900)
 ```
 
 
@@ -263,32 +284,36 @@ f1.0 <- glmer(n ~ 0 + year_planted + (1 |date), data = mod1_counts, family = "po
 (f1.0.ci <- exp(confint(f1.0, oldNames = F)))
 f1est <- data.frame(coef = f1.0.coef, ci.low = f1.0.ci[2:6,1], ci.hi = f1.0.ci[2:6,2],
                     year_planted = 
-                      ordered(c("Pasture", "2011", "2008", "2003", ")ld"),
+                      ordered(c("Pasture", "2011", "2008", "2003", "Old"),
                               levels = c("Pasture", "2011", "2008", "2003", 
                                          "Old")))
 ```
 
 
 ```{r fig.height=4, fig.width=4}
-#make some model fited values
+#make some model fitted values
 f1_pred <- ggpredict(f1, terms = c("year_planted"))
 
 (abund_plot <- ggplot() +
-    geom_point(data = f1est, aes(x = year_planted, y = coef, color = year_planted), alpha = .6) +
+    geom_point(data = f1est, 
+               aes(x = year_planted, y = coef, color = year_planted), 
+               size = 2) +
     geom_errorbar(data = f1est, 
                   aes(x = year_planted, ymax = ci.hi, ymin = ci.low, color = year_planted),
-                  width = .2) +
+                  size = 1, width = .2) +
     scale_color_manual(values = pal,
                        name = "Successional Stage", 
                        labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
     scale_x_discrete(labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
     ylab(expression(paste("Observations transect "^-1))) +
     xlab("Successional Stage") +
-    theme_few() +
-    theme(legend.position = "none"))
+    theme_few(base_size = 8, base_family = "Arial") +
+    theme(legend.position = "none",
+          axis.text = element_text(size = 8, color = "black"),
+          axis.title = element_text(size = 8)))
 
-ggsave("../figures/abund_plot.png")
-ggsave("../figures/abund_plot.pdf")
+ggsave("../figures/abund_plot.png", width = 4, height = 4, units = "in")
+ggsave("../figures/fig2 - abund_plot.pdf", width = 4, height = 4, units = "in", dpi = 300, device = cairo_pdf)
 ```
 
 The above plot shows the raw count data (in the blue points) colored by date. The black squares represent the model estimate for each succession class (think of this as the mean corrected for day effects).  The error bars ar 95% CIs.  Hard to see a trend I'd be confident in here, other than maybe a boost in abundance at the earliest successional stage.  I think the model is overfit, so the parameter estimates themselves are difficult to have much confidence in (the model, in the end, includes 7 parameters for ~65 observations, that's not great...  I trust the graph more.)
@@ -369,20 +394,26 @@ mig.df <- data.frame(year_planted = unique(mig_beta$year_planted),
 mig.df
 ```
 Plot:
-```{r fig.width=4, fig.height=4}
+```{r}
 (mig_plot <- ggplot(mig.df) +
-   geom_point(aes(x=year_planted, y = mean, color = year_planted)) +
-   geom_errorbar(aes(x=year_planted, ymin = ci.low, ymax = ci.hi, color = year_planted), width =.1) +
+   geom_point(aes(x=year_planted, y = mean, color = year_planted), size = 2) +
+   geom_errorbar(aes(x=year_planted, ymin = ci.low, ymax = ci.hi, color = year_planted), 
+                 width =.2, size = 1) +
    scale_color_manual(values = pal,
                       name = "Successional Stage", 
                       labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
    scale_x_discrete(labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
-   ylab(expression(paste("Proportion migrants transect "^-1))) +
+   ylab(expression(paste("Prop. migrants transect "^-1))) +
    xlab("Successional Stage") +
    ylim(0,1)+
-   ggtitle("A") +
-   theme_few() +
-   theme(legend.position = "none"))
+   # ggtitle("A") +
+   theme_few(base_size = 8, base_family = "Arial") +
+   theme(legend.position = "none",
+          axis.text = element_text(size = 8, color = "black"),
+          axis.title = element_text(size = 8)))
+
+ggsave("../figures/mig_plot.png", width = 4, height = 4, units = "in")
+ggsave("../figures/mig_plot.pdf", width = 4, height = 4, units = "in")
 
 # ggplot(mig.df) +
 #   geom_bar(aes(x = year_planted, y = mean, fill = mig_code), 
@@ -460,33 +491,154 @@ guild.df <- data.frame(year_planted = unique(guild_beta$year_planted),
 guild.df
 ```
 Plot:
-```{r fig.height=4, fig.width=4}
+```{r}
 (spec_plot <- ggplot(guild.df) +
-   geom_point(aes(x=year_planted, y = mean, color = year_planted)) +
-   geom_errorbar(aes(x=year_planted, ymin = ci.low, ymax = ci.hi, color = year_planted), width =.1) +
+   geom_point(aes(x=year_planted, y = mean, color = year_planted), size = 2) +
+   geom_errorbar(aes(x=year_planted, ymin = ci.low, ymax = ci.hi, color = year_planted),
+                 width =.2, size = 1) +
    scale_color_manual(values = pal,
                       name = "Successional Stage", 
                       labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
    scale_x_discrete(labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
-   ylab(expression(paste("Proportion specialists transect "^-1))) +
+   ylab(expression(paste("Prop. specialists transect "^-1))) +
    xlab("Successional Stage") +
-   ggtitle("B")+
+   # ggtitle("B")+
    ylim(0,1) +
-   theme_few()+
-   theme(legend.position = "none"))
+   theme_few(base_size = 8, base_family = "Arial")+
+   theme(legend.position = "none",
+          axis.text = element_text(size = 8, color = "black"),
+          axis.title = element_text(size = 8)))
+
+ggsave("../figures/diet_plot.png", width = 5, height = 5, units = "in")
+ggsave("../figures/diet_plot.pdf", width = 5, height = 5, units = "in")
 ```
+## Conservation Status
+
+Basic analysis for IUCN status.
+
+```{r}
+
+#break down mean counts per mig guild
+status_counts <- dat_join %>%
+  group_by(year_planted, transect, IUCN) %>%
+  count(date)  %>%
+  ungroup() %>% 
+  complete(nesting(year_planted, transect, date), IUCN, 
+           fill = list("n" = 0)) 
+
+status_beta <- dat_join %>%
+  group_by(year_planted, transect, date, start_time) %>%
+  summarise(Listed = sum(IUCN == "NT" | IUCN == "VU"),
+            Not_Listed = sum(IUCN == "LC")) %>%
+  mutate(prop = Listed/(Listed+Not_Listed), trials = (Listed+Not_Listed))
+
+# get counts for each status per treatment
+status_prop <- status_counts %>%
+  group_by(year_planted, IUCN) %>% 
+  summarise(m_count = mean(n), 
+            se = sd(n)/length(n),
+            cnt = sum(n))
+# get total listed
+status_beta %>% 
+  group_by(year_planted) %>%
+  summarize(listed = sum(Listed),
+            not_listed = sum(Not_Listed)) %>% 
+  mutate(prop = listed/(listed+not_listed))
+
+status_beta %>% 
+  # group_by(year_planted) %>%
+  ungroup() %>% 
+  summarize(listed = sum(Listed),
+            not_listed = sum(Not_Listed)) %>% 
+  mutate(prop = listed/(listed+not_listed))
+
+status_date <- status_counts %>%
+  group_by(year_planted, date, IUCN) %>% 
+  summarise(m_count = mean(n), 
+            se = sd(n)/length(n))
+
+
+ggplot(status_prop) +
+  geom_bar(aes(x=year_planted, y = m_count, fill = IUCN), 
+           position = "fill", stat = "identity") +
+  ylab("Proportion Birds Observed") +
+  xlab("Treatment") +
+  theme_minimal() +
+  scale_fill_discrete(name = "IUCN Status",
+                      labels = c("Least Concern", "Near Threatened", "Vulnerable"))
+
+dat_join %>% 
+  filter(IUCN == "NT" | IUCN == "VU")
+```
+
+```{r}
+# ggplot(status_counts) +
+#   geom_point(aes(x = date, y = n, group = IUCN,
+#                  color = IUCN)) +
+#   facet_wrap(~year_planted)
+# 
+# ggplot(status_beta) +
+#   geom_point(aes(x = date, y = prop)) +
+#   ylab("Proportion IUCN Listed") +
+#   facet_wrap(~year_planted, nrow =1)
+```
+
+```{r}
+# mean.fun <- function(dat, idx) mean(dat[idx], na.rm = TRUE)
+# 
+# boot.prop <- sapply(unique(status_beta$year_planted), FUN = function(x){
+#   out <- boot(status_beta$prop[status_beta$year_planted == x], mean.fun, R=10000,
+#               sim = "ordinary")
+# }, simplify = F)
+# 
+# 
+# cis.status <- sapply(boot.prop, FUN = function(x){boot.ci(boot.out = x, type="bca")},
+#                     simplify = F)
+# unique(status_beta$year_planted)
+# cis.status
+# 
+# status.df <- data.frame(year_planted = unique(status_beta$year_planted),
+#                        mean = sapply(cis.status, function(x){x$t0}),
+#                        ci.low = sapply(cis.status, function(x){x$bca[4]}),
+#                        ci.hi = sapply(cis.status, function(x){x$bca[5]}))
+# status.df
+```
+Plot:
+```{r}
+# (spec_plot <- ggplot(guild.df) +
+#    geom_point(aes(x=year_planted, y = mean, color = year_planted), size = 4) +
+#    geom_errorbar(aes(x=year_planted, ymin = ci.low, ymax = ci.hi, color = year_planted),
+#                  width =.2, size = 2) +
+#    scale_color_manual(values = pal,
+#                       name = "Successional Stage",
+#                       labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+#    scale_x_discrete(labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+#    ylab(expression(paste("Prop. specialists transect "^-1))) +
+#    xlab("Successional Stage") +
+#    # ggtitle("B")+
+#    ylim(0,1) +
+#    theme_few()+
+#    theme(legend.position = "none",
+#           axis.text = element_text(size = 18),
+#           axis.title = element_text(size = 24)))
+# 
+# ggsave("../figures/diet_plot.png", width = 5, height = 5, units = "in")
+# ggsave("../figures/diet_plot.pdf", width = 5, height = 5, units = "in")
+```
+
 Combine the plots for mig and foraging guild
 
 ```{r}
-gl_guild <- list(mig_plot, spec_plot)
+# gl_guild <- list(mig_plot, spec_plot)
+# 
+# guild <- arrangeGrob(grobs = gl_guild,
+#                      heights = c(4),
+#                      widths = c(4,4),
+#                      layout_matrix = matrix(c(1,2), nrow = 1))
+(guild <- mig_plot + spec_plot + plot_annotation(tag_levels = "A"))
 
-guild <- arrangeGrob(grobs = gl_guild,
-                     heights = c(4),
-                     widths = c(4,4),
-                     layout_matrix = matrix(c(1,2), nrow = 1))
-
-ggsave("../figures/guild_plot.pdf", guild)
-ggsave("../figures/guild_plot.png", guild)
+ggsave("../figures/fig4 - guild_plot.pdf", guild, width = 6, height = 3, dpi = 300, device = cairo_pdf)
+ggsave("../figures/fig4 - guild_plot.png", guild, width = 6, height = 3, dpi = 300)
 ```
 
 
@@ -508,26 +660,27 @@ Let's look at the distribution of tree heights by treatement.
 
 ```{r fig.height=4, fig.width=4}
 trees$treatment <- factor(trees$treatment, 
-                             levels = c("0", "2011", "2008", "2003", "old"))
+                          levels = c("0", "2011", "2008", "2003", "old"))
 (tr_ht <- ggplot() +
-   geom_violin(data = trees,
-               # [trees$treatment != 0,], 
-               aes(x=treatment, y = ht, fill = treatment)) +
-   geom_point(data = trees[trees$treatment == 0,], aes(x = treatment, y = ht),
-              size = 3, color = pal[1]) +
-   scale_fill_manual(values = pal,
-                     name = "Successional Stage",
+    geom_violin(data = trees[trees$treatment != 0,], 
+                aes(x=treatment, y = ht, fill = treatment)) +
+    geom_point(data = trees[trees$treatment == 0,], aes(x = treatment, y = ht),
+               size = 2, color = pal[1]) +
+    scale_fill_manual(values = pal,
+                      name = "Successional Stage",
+                      labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+    scale_x_discrete(name = "Successional Stage",
                      labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
-   scale_x_discrete(name = "Successional Stage",
-                    labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
-   #scale_fill_grey(start = .9, end = 0) +
-   # scale_x_discrete(labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
-   ggtitle("A")+
-   theme_minimal() +
-   ylab("Tree Ht. (cm)") +
-   xlab("Treatment") + 
-   theme_few() +
-   theme(legend.position = "none"))
+    #scale_fill_grey(start = .9, end = 0) +
+    # scale_x_discrete(labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
+    # ggtitle("A")+
+    theme_minimal() +
+    ylab("Tree Height (cm)") +
+    xlab("Treatment") + 
+    theme_few(base_size = 8, base_family = "Arial") +
+    theme(legend.position = "none",
+          axis.text = element_text(size = 8, color = "black"),
+          axis.title = element_text(size = 8)))
 ```
 
 That's pretty interesting, again, the only real standout is the 2011 treatment - 2003 and 2008 look more similar to old than 2011 - just missing the far end of the tail.
@@ -536,12 +689,11 @@ We can do the same thig with DBH data too :
 
 ```{r fig.height=4, fig.width=4}
 (tr_dbh <- ggplot() +
-   geom_violin(data = trees,
-               # [trees$treatment != 0,], 
+   geom_violin(data = trees[trees$treatment != 0,], 
                aes(x=treatment, y = dbh, fill = treatment),
                scale = "count") +
    geom_point(data = trees[trees$treatment == 0,], aes(x = treatment, y = dbh),
-              size = 3, color = pal[1]) +
+              size = 2, color = pal[1]) +
    theme_minimal() +
    ylab("Tree DBH (cm)") +
    scale_fill_manual(values = pal,
@@ -550,9 +702,11 @@ We can do the same thig with DBH data too :
    scale_x_discrete(name = "Successional Stage", 
                     labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
    xlab("Treatment") + 
-   ggtitle("B")+
-   theme_few() +
-   theme(legend.position = "none"))
+   # ggtitle("B")+
+   theme_few(base_size = 8, base_family = "Arial") +
+   theme(legend.position = "none",
+          axis.text = element_text(size = 8, color = "black"),
+          axis.title = element_text(size = 8)))
 ```
 
 Pretty cool looking graph but I think 2011 doesn't jump out to me the way it does for tree height.
@@ -566,7 +720,7 @@ names(trt_lab) <- levels(dens$treatment)
 
 (can_op <- ggplot() +
     geom_jitter(data = dens, aes(x = treatment, y = dens_mean, color = treatment), 
-                size = 3, width = 0.3, height= 0) +
+                size = 2, width = 0.3, height= 0) +
     scale_color_manual(values = pal,
                        name = "Successional Stage", 
                        labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
@@ -574,10 +728,13 @@ names(trt_lab) <- levels(dens$treatment)
                      labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
     ylab("Canopy Openness (%)") +
     xlab("Treatment") + 
-    ggtitle("C") +
-    theme_few() +
-    theme(legend.position = "none", axis.text.x = element_blank(), 
-          axis.ticks.x = element_blank()) +
+    # ggtitle("C") +
+    theme_few(base_size = 8, base_family = "Arial") +
+    theme(legend.position = "none",  
+          axis.ticks.x = element_blank(),
+          axis.text = element_text(size = 8, color = "black"),
+          axis.text.x = element_blank(),
+          axis.title = element_text(size = 8)) +
     facet_grid(~treatment, scales = "free_x", labeller = 
                  labeller(treatment = trt_lab)))
 ```
@@ -588,7 +745,7 @@ names(trt_lab) <- levels(shrubs$year_planted)
 
 (shrub_den <- ggplot() +
     geom_jitter(data = shrubs, aes(x = year_planted, y = shrubs, color = year_planted), 
-                width = .2, height = 0, size = 3) +
+                width = .2, height = 0, size = 2) +
     scale_color_manual(values = pal,
                        name = "Successional Stage", 
                        labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
@@ -596,9 +753,12 @@ names(trt_lab) <- levels(shrubs$year_planted)
                      labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
     ylab("Shrub Density Score") +
     xlab("Treatment") + 
-    ggtitle("D")+
-    theme_few() +
-    theme(legend.position = "none", axis.text.x = element_blank(), 
+    # ggtitle("D")+
+    theme_few(base_size = 8, base_family = "Arial") +
+    theme(legend.position = "none",           
+          axis.text = element_text(size = 8, color = "black"),
+          axis.text.x = element_blank(),
+          axis.title = element_text(size = 8), 
           axis.ticks.x = element_blank())   +
     facet_grid(~year_planted, scales = "free_x", 
                labeller = labeller(year_planted = trt_lab)))
@@ -607,17 +767,19 @@ names(trt_lab) <- levels(shrubs$year_planted)
 ### Combine veg plots
 
 ```{r fig.width=8, fig.height=10}
-gl_veg <- list(tr_ht, tr_dbh, can_op, shrub_den)
+# gl_veg <- list(tr_ht, tr_dbh, can_op, shrub_den)
+# 
+# veg <- arrangeGrob(grobs = gl_veg,
+#                    heights = c(4,4),
+#                    widths = c(4,4),
+#                    layout_matrix = matrix(rbind(c(1,2))))
+      
+veg <- tr_ht + tr_dbh + can_op + shrub_den + plot_annotation(tag_levels = "A") +
+  plot_layout(ncol = 2)
 
-veg <- arrangeGrob(grobs = gl_veg,
-                   heights = c(4,4),
-                   widths = c(4,4),
-                   layout_matrix = matrix(rbind(c(1,2),
-                                                c(3,4)), nrow = 2))
-
-ggsave("../figures/veg_plot.pdf", veg, dpi = 600,
-       width = 8, height = 8, units = c("in"))
-ggsave("../figures/veg_plot.png", veg, dpi = 600,
+ggsave("../figures/fig6 - veg_plot.pdf", veg, dpi = 600,
+       width = 8, height = 8, units = c("in"), device = cairo_pdf)
+ggsave("../figures/fig6 - veg_plot.png", veg, dpi = 600,
        width = 8, height = 8, units = c("in"))
 ```
 
@@ -655,16 +817,21 @@ rich.visit <- ocurr_sites %>%
   summarise(sp_count = sum(pres))
 
 (total_rich_plot <- ggplot(rich) +
-    geom_point(aes(x = year_planted, y = n, color = year_planted), size = 3) +
+    geom_point(aes(x = year_planted, y = n, color = year_planted), size = 2) +
     xlab("Successional Stage") +
     ylab("Total Species Richness") +
     scale_color_manual(values = pal,
                        name = "Successional Stage", 
                        labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
     scale_x_discrete(labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
-    ggtitle("A")+
-    theme_few() +
-    theme(legend.position = "none"))
+    # ggtitle("A")+
+    theme_few(base_size = 8, base_family = "Arial") +
+    theme(legend.position = "none",
+          axis.text = element_text(size = 8, color = "black"),
+          axis.title = element_text(size = 8)))
+
+ggsave("../figures/total_rich.png", width = 3, height = 5, units = "in")
+ggsave("../figures/total_rich.pdf", width = 3, height = 5, units = "in")
 
 ggplot(rich.visit) +
   geom_point(aes(x = date, y = sp_count, color = transect)) +
@@ -696,33 +863,41 @@ rich.df <- data.frame(year_planted = unique(rich.visit$year_planted),
 rich.df
 ```
 Plot:
-```{r fig.height=4, fig.width=4}
+```{r}
 (per_rich_plot <- ggplot(rich.df) +
-   geom_point(aes(x=year_planted, y = mean, color = year_planted)) +
-   geom_errorbar(aes(x=year_planted, ymin = ci.low, ymax = ci.hi, color = year_planted), width =.1) +
-   ylab(expression(paste("Species Richness Transect "^-1))) +
+   geom_point(aes(x=year_planted, y = mean, color = year_planted), size =2) +
+   geom_errorbar(aes(x=year_planted, ymin = ci.low, ymax = ci.hi, color = year_planted), 
+                 width =.2, size = 1) +
+   ylab(expression(paste("Species transect "^-1))) +
    xlab("Successional Stage") +
    scale_color_manual(values = pal,
                       name = "Successional Stage", 
                       labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
    scale_x_discrete(labels = c("Pasture", "T-7", "T-10", "T-15", "Old")) +
-   ggtitle("B")+
-   theme_few() +
-   theme(legend.position = "none"))
+   # ggtitle("B")+
+   theme_few(base_size = 8, base_family = "Arial") +
+   theme(legend.position = "none",
+          axis.text = element_text(size = 8, color = "black"),
+          axis.title = element_text(size = 8)))
+
+ggsave("../figures/rich_dotwhisker_plot.png", width = 3, height = 5, units = "in")
+ggsave("../figures/rich_dotwhisker_plot.pdf", width = 3, height = 5, units = "in")
 ```
 
 Plot them together:
 
 ```{r}
-gl1 <- list(total_rich_plot, per_rich_plot)
+# gl1 <- list(total_rich_plot, per_rich_plot)
 
-rich <- arrangeGrob(grobs = gl1,
-                    heights = c(4),
-                    widths = c(4,4),
-                    layout_matrix = matrix(c(1,2), nrow = 1))
+# rich <- arrangeGrob(grobs = gl1,
+#                     heights = c(5),
+#                     widths = c(3,3),
+#                     layout_matrix = matrix(c(1,2), nrow = 1))
 
-ggsave("../figures/rich_plot.pdf", rich)
-ggsave("../figures/rich_plot.png", rich)
+(rich <- total_rich_plot + per_rich_plot + plot_annotation(tag_levels = "A"))
+
+ggsave("../figures/fig3 - rich_plot.pdf", rich, width = 6, height = 3, dpi = 300, device = cairo_pdf)
+ggsave("../figures/fig3 - rich_plot.png", rich, width = 6, height = 3, dpi = 300)
 ```
 
 
@@ -774,7 +949,7 @@ Plots
 
 ```{r}
 #extract NMDS scores (x and y coordinates)
-data.scores <- as.data.frame(scores(NMDS))
+data.scores <- as.data.frame(scores(NMDS)$sites)
 data.scores$year_planted <- mat_key$year_planted
 
 
@@ -792,13 +967,11 @@ data.scores$year_planted <- mat_key$year_planted
     
     # geom_point(data = species.score, aes(x=MDS1, y = MDS2)) +
     # scale_color_discrete(name = "Migratory Status", labels = c("Migrant", "Resident")) +
-    geom_text_repel(data = species.score, aes(x=MDS1, y = MDS2, label = species),
-      C              size = 2, direction = "both", force_pull = 1, segment.olor = 'transparent',
-                    max.overlaps = 40) +
-    theme_few())
+    # gC
+    theme_few(base_size = 8, base_family = "Arial"))
 
-ggsave("../figures/nmds_supp.pdf")
-ggsave("../figures/nmds_supp.png")
+ggsave("../figures/fig5 - nmds.pdf", nmds, width = 4, height = 3, dpi = 300, device = cairo_pdf)
+ggsave("../figures/fig5 - nmds.png", nmds, width = 4, height = 3, dpi = 300)
 
 ```
 SI version with species codes
